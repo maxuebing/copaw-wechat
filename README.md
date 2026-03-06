@@ -17,8 +17,8 @@
 2. 克隆仓库并安装：
 
 ```bash
-git clone git@github.com:maxuebing/copaw-wechat-bot.git
-cd copaw-wechat-bot
+git clone git@github.com:maxuebing/copaw-wechat.git
+cd copaw-wechat
 pip install -r requirements.txt
 pip install .
 ```
