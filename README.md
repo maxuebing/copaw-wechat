@@ -34,9 +34,9 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
 
 | 参数名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `corp_id` | str | 是 | 企业微信 Corp ID |
-| `corp_secret` | str | 是 | 企业微信 Corp Secret |
-| `agent_id` | int | 是 | 企业微信 Agent ID |
+| `corp_id` | str | 是 | 企业微信 Corp ID (对应企业微信后台的 企业ID) |
+| `corp_secret` | str | 否 | 企业微信应用的 Secret (对应企业微信后台的 Secret)。**仅在需要主动发送消息（如流式回复）时必填** |
+| `agent_id` | int | 否 | 企业微信应用的 Agent ID。**仅在需要主动发送消息时必填** |
 | `token` | str | 是 | 回调 Token (对应企业微信后台的 Token) |
 | `encoding_aes_key` | str | 是 | 回调 EncodingAESKey (对应企业微信后台的 EncodingAESKey) |
 | `webhook_path` | str | 否 | Webhook 路径，默认为 `/wecom/callback` |
@@ -50,11 +50,11 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
     "wechat": {
       "enabled": true,
       "corp_id": "wwxxxxxxxxxxxxxxxx",
-      "corp_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "agent_id": 1000001,
       "token": "xxxxxxxxxxxx",
       "encoding_aes_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "webhook_path": "/wecom/callback"
+      // "corp_secret": "仅在主动发消息时需要",
+      // "agent_id": 1000001
     }
   }
 }

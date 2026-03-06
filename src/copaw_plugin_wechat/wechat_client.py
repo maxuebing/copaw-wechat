@@ -15,23 +15,28 @@ logger = logging.getLogger(__name__)
 class WechatClient:
     def __init__(self, config: WechatConfig):
         self.config = config
-        self.client = BaseWeChatClient(
-            self.config.corp_id,
-            self.config.corp_secret
-        )
+        self.client: Optional[BaseWeChatClient] = None
+        
+        # 仅当配置了 corp_secret 时初始化主动发送客户端
+        if self.config.corp_secret:
+            self.client = BaseWeChatClient(
+                self.config.corp_id,
+                self.config.corp_secret
+            )
+            
+            # 如果配置了代理，设置 session 代理
+            if self.config.outbound_proxy:
+                proxies = {
+                    "http": self.config.outbound_proxy,
+                    "https": self.config.outbound_proxy
+                }
+                self.client.session.proxies.update(proxies)
+        
         self.crypto = WeChatCrypto(
             self.config.token,
             self.config.encoding_aes_key,
             self.config.corp_id
         )
-        
-        # 如果配置了代理，设置 session 代理
-        if self.config.outbound_proxy:
-            proxies = {
-                "http": self.config.outbound_proxy,
-                "https": self.config.outbound_proxy
-            }
-            self.client.session.proxies.update(proxies)
 
     def verify_signature(self, signature: str, timestamp: str, nonce: str, echostr: str) -> str:
         """
@@ -75,6 +80,10 @@ class WechatClient:
         """
         发送文本消息
         """
+        if not self.client or not self.config.agent_id:
+            logger.error("Active sending failed: corp_secret or agent_id is not configured")
+            return None
+            
         try:
             return self.client.message.send_text(
                 self.config.agent_id,
@@ -89,6 +98,10 @@ class WechatClient:
         """
         发送图片消息
         """
+        if not self.client or not self.config.agent_id:
+            logger.error("Active sending failed: corp_secret or agent_id is not configured")
+            return None
+
         try:
             return self.client.message.send_image(
                 self.config.agent_id,
@@ -103,6 +116,10 @@ class WechatClient:
         """
         上传临时素材
         """
+        if not self.client:
+            logger.error("Media upload failed: corp_secret is not configured")
+            return None
+
         try:
             return self.client.media.upload(media_type, file_obj)
         except Exception as e:

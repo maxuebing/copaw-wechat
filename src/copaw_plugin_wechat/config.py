@@ -9,9 +9,9 @@ class WechatConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用 WeCom 渠道")
     
     # 企业信息
-    corp_id: str = Field(..., description="企业微信 Corp ID")
-    corp_secret: str = Field(..., description="企业微信 Corp Secret")
-    agent_id: int = Field(..., description="企业微信 Agent ID")
+    corp_id: str = Field(..., description="企业微信 Corp ID (必填)")
+    corp_secret: Optional[str] = Field(default=None, description="企业微信 Corp Secret (可选，仅主动发消息时需要)")
+    agent_id: Optional[int] = Field(default=None, description="企业微信 Agent ID (可选，仅主动发消息时需要)")
     
     # 回调配置
     token: str = Field(..., description="回调 Token")
