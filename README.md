@@ -25,7 +25,10 @@ pip install .
 
 ## 配置
 
-CoPaw 会在工作目录下生成配置文件（默认为 `~/.copaw/config.json`）。请在 `channels` 部分添加 `wechat` 配置项。
+CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `wechat` 配置项。
+
+- **本地部署**：默认配置文件路径为 `~/.copaw/config.json`。
+- **Docker 部署**：如果您使用的是官方 Docker 镜像并挂载了数据卷（如 `-v copaw-data:/app/working`），配置文件通常位于挂载卷对应的 `/app/working/config.json`（在宿主机上对应的路径取决于您的 Docker 卷配置）。
 
 ### 配置参数说明
 
