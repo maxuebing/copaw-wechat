@@ -41,7 +41,6 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
 | `encoding_aes_key` | str | 是 | 回调 EncodingAESKey (对应企业微信后台的 EncodingAESKey) |
 | `webhook_path` | str | 否 | Webhook 路径，默认为 `/wecom/callback` |
 | `outbound_proxy` | str | 否 | HTTP 代理地址，例如 `http://127.0.0.1:7890` |
-| `allow_from` | list | 否 | 允许发送消息的用户 ID 列表（白名单） |
 
 ### 配置示例
 
@@ -55,8 +54,7 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
       "agent_id": 1000001,
       "token": "xxxxxxxxxxxx",
       "encoding_aes_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "webhook_path": "/wecom/callback",
-      "allow_from": ["user1", "user2"]
+      "webhook_path": "/wecom/callback"
     }
   }
 }

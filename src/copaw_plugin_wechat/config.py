@@ -24,6 +24,3 @@ class WechatConfig(BaseModel):
     # 消息处理配置
     bot_enabled: bool = Field(default=False, description="是否启用 Bot 模式")
     stream_enabled: bool = Field(default=False, description="是否启用流式回复")
-    
-    # 允许发送的用户 (可选)
-    allow_from: Optional[List[str]] = Field(default=None, description="允许发送消息的用户列表")
