@@ -62,49 +62,6 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
 }
 ```
 
-## 使用方法
-
-### 1. 初始化插件
-
-```python
-from copaw_plugin_wechat import create_plugin
-
-config = {
-    "corp_id": "wwxxxxxxxxxxxxxxxx",
-    "corp_secret": "your_secret",
-    "agent_id": 1000001,
-    "token": "your_token",
-    "encoding_aes_key": "your_aes_key"
-}
-
-plugin = create_plugin(config)
-```
-
-### 2. 注册到 FastAPI 应用
-
-CoPaw 使用 FastAPI 作为 Web 框架，你需要将插件的路由注册到主应用中。
-
-```python
-from fastapi import FastAPI
-
-app = FastAPI()
-app.include_router(plugin.router)
-```
-
-### 3. 处理接收到的消息
-
-注册回调函数来处理接收到的消息：
-
-```python
-async def on_message(msg):
-    print(f"Received message: {msg}")
-    # 在这里调用 CoPaw 的 Agent 进行处理
-    # response = await agent.process(msg['content'])
-    # await plugin.send_text(msg['source'], response)
-
-plugin.register_agent_callback(on_message)
-```
-
 ## 企业微信后台配置
 
 1. 登录 [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)。
