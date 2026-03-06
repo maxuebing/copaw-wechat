@@ -7,6 +7,8 @@ from wechatpy.enterprise.exceptions import InvalidCorpIdException
 from wechatpy.messages import parse_message
 from wechatpy.replies import TextReply
 import requests
+import time
+import random
 
 from .config import WechatConfig
 
@@ -75,6 +77,16 @@ class WechatClient:
         logger.info(f"Received message: {msg}")
             
         return msg
+
+    def create_passive_reply(self, msg: Any, content: str) -> str:
+        """
+        生成被动回复消息 (XML 格式且加密)
+        """
+        reply = TextReply(content=content, message=msg)
+        xml = reply.render()
+        timestamp = str(int(time.time()))
+        nonce = str(random.randint(100000, 999999))
+        return self.crypto.encrypt_message(xml, nonce, timestamp)
 
     def send_text(self, user_id: str, content: str):
         """

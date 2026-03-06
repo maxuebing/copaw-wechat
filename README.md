@@ -62,11 +62,30 @@ CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `
 
 ## 企业微信后台配置
 
+该插件支持两种对接模式：**自建应用模式** 和 **智能机器人模式**。
+
+### 模式 1：自建应用模式 (推荐)
+
+这是最常用的模式，支持主动发送消息。
+
 1. 登录 [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)。
-2. 进入 **应用管理** -> **自建** -> **创建应用**。
-3. 获取 `AgentId` and `Secret`。
+2. 进入 **应用管理** -> **应用** -> **自建** -> **创建应用**。
+3. 获取 `AgentId` 和 `Secret`。
 4. 在 **接收消息** 部分，点击 **设置 API 接收**。
-   - **URL**: `http://your-server-ip:port/wecom/callback` (注意替换为你实际部署的 IP 和端口，以及配置的 `webhook_path`)
+   - **URL**: `http://your-server-ip:port/wecom/callback`
    - **Token**: 对应配置中的 `token`
    - **EncodingAESKey**: 对应配置中的 `encoding_aes_key`
-5. 点击 **保存**，企业微信会发送 GET 请求验证 URL，如果插件运行正常且配置正确，将会验证通过。
+5. 保存并验证。
+
+### 模式 2：智能机器人模式 (更轻量)
+
+如果您只需要简单的被动对话，可以使用“智能机器人”模式。在这种模式下，您可以不配置 `corp_secret`。
+
+1. 登录 [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)。
+2. 进入 **应用管理** -> **机器人** (位于页面底部)。
+3. 创建机器人并进入详情页。
+4. 开启 **API 模式**。
+5. 配置 **接收回调**：
+   - **URL**: `http://your-server-ip:port/wecom/callback`
+   - **Token** 和 **EncodingAESKey**: 填入插件配置中。
+6. 注意：此模式下机器人只能通过“被动回复”进行对话，且响应必须在 5 秒内完成。配置时 `corp_secret` 和 `agent_id` 可留空。

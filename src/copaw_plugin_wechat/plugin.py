@@ -1,6 +1,6 @@
 import logging
-from fastapi import APIRouter, Request, HTTPException, Depends
-from typing import Optional, Callable, Dict, Any
+from fastapi import APIRouter, Request, HTTPException, Response
+from typing import Optional, Callable, Dict, Any, Union
 from pydantic import ValidationError
 from wechatpy.messages import BaseMessage
 from wechatpy.exceptions import InvalidSignatureException
@@ -16,13 +16,14 @@ class WechatPlugin:
         self.config = config
         self.client = WechatClient(config)
         self.router = APIRouter()
-        self.agent_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.agent_callback: Optional[Callable[[Dict[str, Any]], Union[None, str, Dict[str, Any]]]] = None
         
         self.setup_routes()
 
-    def register_agent_callback(self, callback: Callable[[Dict[str, Any]], None]):
+    def register_agent_callback(self, callback: Callable[[Dict[str, Any]], Union[None, str, Dict[str, Any]]]):
         """
         注册 Agent 回调函数，用于将消息传递给 CoPaw
+        如果回调函数返回字符串，则插件会尝试进行“被动回复”。
         """
         self.agent_callback = callback
 
@@ -34,7 +35,7 @@ class WechatPlugin:
             """
             try:
                 echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
-                return int(echo_str)
+                return Response(content=echo_str, media_type="text/plain")
             except InvalidSignatureException:
                 logger.error("Invalid signature")
                 raise HTTPException(status_code=403, detail="Invalid signature")
@@ -54,12 +55,20 @@ class WechatPlugin:
                 if msg:
                     parsed_msg = await handle_message(msg)
                     if self.agent_callback:
-                        await self.agent_callback(parsed_msg)
-                    else:
-                        logger.warning("No agent callback registered, message dropped")
-                    return "success"
+                        # 触发回调并检查是否有被动回复内容
+                        # 注意：被动回复必须在 5 秒内完成响应
+                        reply_content = await self.agent_callback(parsed_msg)
+                        
+                        if reply_content and isinstance(reply_content, str):
+                            encrypted_reply = self.client.create_passive_reply(msg, reply_content)
+                            return Response(content=encrypted_reply, media_type="application/xml")
+                        elif reply_content and isinstance(reply_content, dict) and reply_content.get("type") == "text":
+                            encrypted_reply = self.client.create_passive_reply(msg, reply_content["content"])
+                            return Response(content=encrypted_reply, media_type="application/xml")
+                    
+                    return Response(content="success", media_type="text/plain")
                 else:
-                    return "success"
+                    return Response(content="success", media_type="text/plain")
             except Exception as e:
                 logger.error(f"Receive message failed: {e}")
                 raise HTTPException(status_code=500, detail="Internal Server Error")
