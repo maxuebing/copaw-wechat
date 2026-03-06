@@ -68,11 +68,6 @@ class WechatClient:
 
         msg = parse_message(decrypted_xml)
         logger.info(f"Received message: {msg}")
-        
-        # 简单的权限检查
-        if self.config.allow_from and msg.source not in self.config.allow_from:
-            logger.warning(f"Message from unauthorized user: {msg.source}")
-            return None
             
         return msg
 
