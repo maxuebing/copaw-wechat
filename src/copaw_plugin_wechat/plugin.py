@@ -13,7 +13,7 @@ from wechatpy.exceptions import InvalidSignatureException
 
 # 修正导入路径：从 copaw.app.channels.base 导入
 try:
-    from copaw.app.channels.base import BaseChannel
+    from copaw.app.channels.base import BaseChannel, ProcessHandler, OnReplySent
     with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
         f.write("BaseChannel imported successfully!\n")
 except ImportError as e:
@@ -21,11 +21,13 @@ except ImportError as e:
         f.write(f"BaseChannel import failed: {e}\n")
     # 兼容本地开发环境可能没有 copaw 包的情况
     class BaseChannel:
-        def __init__(self, config: Any): pass
+        def __init__(self, *args, **kwargs): pass
         async def start(self): pass
         async def stop(self): pass
         async def send_message(self, message: Dict[str, Any]): pass
         def register_agent_callback(self, callback: Callable): pass
+    ProcessHandler = Any
+    OnReplySent = Any
 
 from .config import WechatConfig
 from .wechat_client import WechatClient
@@ -36,15 +38,78 @@ logger = logging.getLogger(__name__)
 class WechatPlugin(BaseChannel):
     channel = "wechat"
     
-    def __init__(self, config: WechatConfig):
+    def __init__(
+        self,
+        process: ProcessHandler,
+        config: WechatConfig,
+        on_reply_sent: OnReplySent = None,
+        show_tool_details: bool = True,
+        filter_tool_messages: bool = False,
+        filter_thinking: bool = False,
+    ):
         with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
             f.write(f"WechatPlugin initialized with config: {config}\n")
+            
+        super().__init__(
+            process=process,
+            on_reply_sent=on_reply_sent,
+            show_tool_details=show_tool_details,
+            filter_tool_messages=filter_tool_messages,
+            filter_thinking=filter_thinking,
+        )
         self.config = config
         self.client = WechatClient(config)
         self.router = APIRouter()
         self.agent_callback: Optional[Callable[[Dict[str, Any]], Union[None, str, Dict[str, Any]]]] = None
         
         self.setup_routes()
+
+    @classmethod
+    def from_config(
+        cls,
+        process: ProcessHandler,
+        config: Any,
+        on_reply_sent: OnReplySent = None,
+        show_tool_details: bool = True,
+        filter_tool_messages: bool = False,
+        filter_thinking: bool = False,
+    ) -> "WechatPlugin":
+        """
+        从配置对象创建插件实例
+        """
+        if isinstance(config, dict):
+            # 过滤掉不需要的键，或者只取需要的
+            # 这里简单起见，假设 config 字典可以直接传给 WechatConfig
+            # 但为了安全，最好只传 WechatConfig 定义的字段
+            try:
+                wechat_config = WechatConfig(**config)
+            except ValidationError:
+                # 如果包含额外字段，尝试过滤
+                valid_keys = WechatConfig.model_fields.keys()
+                filtered_config = {k: v for k, v in config.items() if k in valid_keys}
+                wechat_config = WechatConfig(**filtered_config)
+        elif hasattr(config, "model_dump"):
+            wechat_config = WechatConfig(**config.model_dump())
+        else:
+            # 尝试把对象转字典
+            try:
+                config_dict = vars(config)
+            except TypeError:
+                config_dict = config.__dict__
+            
+            # 过滤
+            valid_keys = WechatConfig.model_fields.keys()
+            filtered_config = {k: v for k, v in config_dict.items() if k in valid_keys}
+            wechat_config = WechatConfig(**filtered_config)
+            
+        return cls(
+            process=process,
+            config=wechat_config,
+            on_reply_sent=on_reply_sent,
+            show_tool_details=show_tool_details,
+            filter_tool_messages=filter_tool_messages,
+            filter_thinking=filter_thinking,
+        )
 
     async def start(self):
         """
