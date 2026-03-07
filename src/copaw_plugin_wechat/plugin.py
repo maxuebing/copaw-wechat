@@ -162,69 +162,85 @@ class WechatPlugin(BaseChannel):
 
     def setup_routes(self):
 
-        @self.router.get(self.config.webhook_path)
-        async def verify_url(msg_signature: str, timestamp: str, nonce: str, echostr: str):
+        @self.router.api_route(self.config.webhook_path, methods=["GET", "POST"])
+        async def handle_wechat_callback(
+            request: Request,
+            msg_signature: str,
+            timestamp: str,
+            nonce: str,
+            echostr: Optional[str] = None
+        ):
             """
-            验证回调 URL (GET 请求)
+            统一处理企业微信的回调请求 (GET 用于验证, POST 用于接收消息)
             """
-            try:
-                echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
-                return Response(content=echo_str, media_type="text/plain")
-            except InvalidSignatureException:
-                logger.error("Invalid signature")
-                raise HTTPException(status_code=403, detail="Invalid signature")
-            except Exception as e:
-                logger.error(f"Verify URL failed: {e}")
-                raise HTTPException(status_code=500, detail="Internal Server Error")
-
-        @self.router.post(self.config.webhook_path)
-        async def receive_message(request: Request, msg_signature: str, timestamp: str, nonce: str):
-            """
-            接收消息回调 (POST 请求)
-            """
-            try:
-                body = await request.body()
-                body_str = body.decode("utf-8")
-                
-                # 判断请求格式是否为 JSON
-                is_json_request = False
+            if request.method == "GET":
+                # 验证回调 URL
+                if not echostr:
+                    raise HTTPException(status_code=400, detail="Missing echostr for GET request")
                 try:
-                    if body_str.strip().startswith('{'):
-                        json.loads(body_str)
-                        is_json_request = True
-                except:
-                    pass
-
-                msg = self.client.handle_message(msg_signature, timestamp, nonce, body_str)
-                
-                if msg:
-                    parsed_msg = await handle_message(msg)
-                    if self.agent_callback:
-                        # 触发回调并检查是否有被动回复内容
-                        # 注意：被动回复必须在 5 秒内完成响应
-                        reply_content = await self.agent_callback(parsed_msg)
-                        
-                        final_reply_content = None
-                        if reply_content and isinstance(reply_content, str):
-                            final_reply_content = reply_content
-                        elif reply_content and isinstance(reply_content, dict) and reply_content.get("type") == "text":
-                            final_reply_content = reply_content["content"]
-                        
-                        if final_reply_content:
-                            reply_format = "json" if is_json_request else "xml"
-                            encrypted_reply = self.client.create_passive_reply(msg, final_reply_content, reply_format=reply_format)
-                            
-                            if reply_format == "json":
-                                return Response(content=json.dumps(encrypted_reply), media_type="application/json")
-                            else:
-                                return Response(content=encrypted_reply, media_type="application/xml")
+                    echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
+                    return Response(content=echo_str, media_type="text/plain")
+                except InvalidSignatureException:
+                    logger.error("Invalid signature")
+                    raise HTTPException(status_code=403, detail="Invalid signature")
+                except Exception as e:
+                    logger.error(f"Verify URL failed: {e}")
+                    raise HTTPException(status_code=500, detail="Internal Server Error")
+            
+            elif request.method == "POST":
+                # 接收消息回调
+                try:
+                    body = await request.body()
+                    body_str = body.decode("utf-8")
                     
-                    return Response(content="success", media_type="text/plain")
-                else:
-                    return Response(content="success", media_type="text/plain")
-            except Exception as e:
-                logger.error(f"Receive message failed: {e}")
-                raise HTTPException(status_code=500, detail="Internal Server Error")
+                    # 判断请求格式是否为 JSON
+                    is_json_request = False
+                    try:
+                        if body_str.strip().startswith('{'):
+                            json.loads(body_str)
+                            is_json_request = True
+                    except:
+                        pass
+
+                    msg = self.client.handle_message(msg_signature, timestamp, nonce, body_str)
+                    
+                    if msg:
+                        # 转换消息对象为字典，以便传递给 ProcessHandler
+                        # 注意：这里需要根据 msg 类型进行转换，wechatpy 的 message 对象通常有转 dict 的方法或者属性
+                        parsed_msg = await handle_message(msg)
+                        
+                        if self.agent_callback:
+                            # 触发回调并检查是否有被动回复内容
+                            # 注意：被动回复必须在 5 秒内完成响应
+                            reply_content = await self.agent_callback(parsed_msg)
+                            
+                            final_reply_content = None
+                            if reply_content and isinstance(reply_content, str):
+                                final_reply_content = reply_content
+                            elif reply_content and isinstance(reply_content, dict) and reply_content.get("type") == "text":
+                                final_reply_content = reply_content["content"]
+                                
+                            if final_reply_content:
+                                reply_format = "json" if is_json_request else "xml"
+                                encrypted_reply = self.client.create_passive_reply(msg, final_reply_content, reply_format=reply_format)
+                                
+                                if reply_format == "json":
+                                    # JSON 格式回复
+                                    return Response(content=json.dumps(encrypted_reply), media_type="application/json")
+                                else:
+                                    # XML 格式回复
+                                    return Response(content=encrypted_reply, media_type="application/xml")
+                        
+                        # 默认返回 success
+                        return Response(content="success", media_type="text/plain")
+                    else:
+                        return Response(content="success", media_type="text/plain")
+                except InvalidSignatureException:
+                    logger.error("Invalid signature")
+                    raise HTTPException(status_code=403, detail="Invalid signature")
+                except Exception as e:
+                    logger.error(f"Receive message failed: {e}")
+                    raise HTTPException(status_code=500, detail="Internal Server Error")
 
     async def send_text(self, to_user: str, content: str):
         """
