@@ -164,35 +164,47 @@ class WechatPlugin(BaseChannel):
 
         @self.router.api_route(self.config.webhook_path, methods=["GET", "POST"])
         async def handle_wechat_callback(
-            request: Request,
-            msg_signature: str,
-            timestamp: str,
-            nonce: str,
-            echostr: Optional[str] = None
+            request: Request
         ):
             """
             统一处理企业微信的回调请求 (GET 用于验证, POST 用于接收消息)
             """
+            # 从查询参数中获取必要字段
+            msg_signature = request.query_params.get("msg_signature")
+            timestamp = request.query_params.get("timestamp")
+            nonce = request.query_params.get("nonce")
+            echostr = request.query_params.get("echostr")
+
+            logger.info(f"Incoming {request.method} request. Params: {dict(request.query_params)}")
+
             if request.method == "GET":
                 # 验证回调 URL
                 if not echostr:
+                    logger.error("GET request missing echostr")
                     raise HTTPException(status_code=400, detail="Missing echostr for GET request")
+                if not all([msg_signature, timestamp, nonce]):
+                    logger.error(f"GET request missing parameters: signature={msg_signature}, timestamp={timestamp}, nonce={nonce}")
+                    raise HTTPException(status_code=400, detail="Missing required parameters")
                 try:
                     echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
+                    logger.info(f"URL verified successfully. Returning echo_str: {echo_str}")
                     return Response(content=echo_str, media_type="text/plain")
                 except InvalidSignatureException:
-                    logger.error("Invalid signature")
+                    logger.error("Invalid signature during URL verification")
                     raise HTTPException(status_code=403, detail="Invalid signature")
                 except Exception as e:
-                    logger.error(f"Verify URL failed: {e}")
+                    logger.error(f"Verify URL failed: {e}", exc_info=True)
                     raise HTTPException(status_code=500, detail="Internal Server Error")
             
             elif request.method == "POST":
                 # 接收消息回调
+                if not all([msg_signature, timestamp, nonce]):
+                    logger.error(f"POST request missing parameters: signature={msg_signature}, timestamp={timestamp}, nonce={nonce}")
+                    raise HTTPException(status_code=400, detail="Missing required parameters")
                 try:
                     body = await request.body()
                     body_str = body.decode("utf-8")
-                    logger.info(f"Received WeCom POST request. Body: {body_str}")
+                    logger.info(f"Received WeCom POST request body: {body_str}")
                     
                     # 判断请求格式是否为 JSON
                     is_json_request = False
@@ -203,13 +215,13 @@ class WechatPlugin(BaseChannel):
                     except:
                         pass
 
-                    logger.info(f"Request format identified as: {'JSON' if is_json_request else 'XML'}")
+                    logger.info(f"Request body format: {'JSON' if is_json_request else 'XML'}")
 
                     msg = self.client.handle_message(msg_signature, timestamp, nonce, body_str)
                     
                     if msg:
-                        logger.info(f"Message decrypted successfully: {msg}")
-                        # 转换消息对象为字典，以便传递给 ProcessHandler
+                        logger.info(f"Message decrypted: {msg}")
+                        # 转换消息对象为字典
                         parsed_msg = await handle_message(msg)
                         
                         if self.agent_callback:
@@ -230,29 +242,26 @@ class WechatPlugin(BaseChannel):
                                 if reply_format == "json":
                                     # JSON 格式回复
                                     response_content = json.dumps(encrypted_reply)
-                                    logger.info(f"Sending JSON response: {response_content}")
+                                    logger.info(f"Sending JSON encrypted response: {response_content}")
                                     return Response(content=response_content, media_type="application/json")
                                 else:
                                     # XML 格式回复
-                                    logger.info(f"Sending XML response: {encrypted_reply}")
+                                    logger.info(f"Sending XML encrypted response: {encrypted_reply}")
                                     return Response(content=encrypted_reply, media_type="application/xml")
                         
                         # 默认返回 success
-                        logger.info("No passive reply generated, returning 'success'")
+                        logger.info("No passive reply needed, returning 'success'")
                         return Response(content="success", media_type="text/plain")
                     else:
-                        logger.warning("Handle message returned None, returning 'success'")
+                        logger.warning("Decrypted message is empty, returning 'success'")
                         return Response(content="success", media_type="text/plain")
                 except InvalidSignatureException:
-                    logger.error("Invalid signature")
+                    logger.error("Invalid signature during message reception")
                     raise HTTPException(status_code=403, detail="Invalid signature")
                 except Exception as e:
-                    logger.error(f"Receive message failed: {e}", exc_info=True)
-                    # 即使出错，也尝试返回 success 避免企业微信重试（参考 chain-bot 逻辑）
-                    # 但为了排查问题，这里先保留 500，或者根据用户需求改为 200 success
-                    # 用户反馈是“提示服务器返回有误”，如果返回 200 success，企业微信应该不会报错除非它期望特定响应
-                    # 暂时保持抛出异常以便在日志中看到错误
-                    raise HTTPException(status_code=500, detail="Internal Server Error")
+                    logger.error(f"Message processing failed: {e}", exc_info=True)
+                    # 即使出错也返回 success 避免企业微信重复推送
+                    return Response(content="success", media_type="text/plain")
 
     async def send_text(self, to_user: str, content: str):
         """
