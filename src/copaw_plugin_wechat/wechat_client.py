@@ -15,11 +15,17 @@ logger = logging.getLogger(__name__)
 class WechatClient:
     def __init__(self, config: WechatConfig):
         self.config = config
-        self.crypto = WechatMsgCrypt(
+        self.robot_crypto = WechatMsgCrypt(
             self.config.token,
             self.config.encoding_aes_key,
             ""
         )
+        self.corp_crypto = WechatMsgCrypt(
+            self.config.token,
+            self.config.encoding_aes_key,
+            self.config.corp_id
+        )
+        self.crypto = self.robot_crypto
 
     def verify_signature(self, signature: str, timestamp: str, nonce: str, echostr: str) -> str:
         """
@@ -27,13 +33,19 @@ class WechatClient:
         """
         try:
             normalized_echostr = unquote(echostr)
-            decrypted = self.crypto.verify_url(
-                signature,
-                timestamp,
-                nonce,
-                normalized_echostr
-            )
-            return decrypted.rstrip("\r\n")
+            for crypto in (self.robot_crypto, self.corp_crypto):
+                try:
+                    decrypted = crypto.verify_url(
+                        signature,
+                        timestamp,
+                        nonce,
+                        normalized_echostr
+                    )
+                    self.crypto = crypto
+                    return decrypted.rstrip("\r\n")
+                except Exception:
+                    continue
+            raise Exception("Invalid Signature")
         except Exception as e:
             logger.error(f"Verify signature failed: {e}")
             raise Exception("Invalid Signature")
@@ -67,18 +79,28 @@ class WechatClient:
                     return None
                 
                 # 直接使用 WechatMsgCrypt 解密
-                ret, decrypted_content = self.crypto.decrypt_msg(encrypt_content)
-                if ret != 0:
-                     logger.error("Decrypt message failed")
-                     return None
+                decrypted_content = None
+                for crypto in (self.robot_crypto, self.corp_crypto):
+                    ret, decrypted_content = crypto.decrypt_msg(encrypt_content)
+                    if ret == 0:
+                        self.crypto = crypto
+                        break
+                if not decrypted_content:
+                    logger.error("Decrypt message failed")
+                    return None
             else:
                 # 处理 XML 格式
                 # 提取 Encrypt 字段
                 try:
                     root = ET.fromstring(data)
                     encrypt_content = root.find("Encrypt").text
-                    ret, decrypted_content = self.crypto.decrypt_msg(encrypt_content)
-                    if ret != 0:
+                    decrypted_content = None
+                    for crypto in (self.robot_crypto, self.corp_crypto):
+                        ret, decrypted_content = crypto.decrypt_msg(encrypt_content)
+                        if ret == 0:
+                            self.crypto = crypto
+                            break
+                    if not decrypted_content:
                         logger.error("Decrypt message failed")
                         return None
                 except Exception as e:
