@@ -26,20 +26,48 @@ pip install -r requirements.txt
 ```
 
 3. **注册插件**：
-将插件源码软链接或拷贝到 CoPaw 的插件目录下：
+将插件源码软链接或拷贝到 CoPaw 的自定义插件目录（注意：必须是 `custom_channels`）：
 - **本地部署**：
 ```bash
-mkdir -p ~/.copaw/plugins
-ln -s $(pwd)/src/copaw_plugin_wechat ~/.copaw/plugins/wechat
+mkdir -p ~/.copaw/custom_channels
+ln -s $(pwd)/src/copaw_plugin_wechat ~/.copaw/custom_channels/wechat
 ```
 - **Docker 部署**：
 在 `docker-compose.yml` 中挂载目录：
 ```yaml
 volumes:
-  - ./src/copaw_plugin_wechat:/app/working/plugins/wechat
+  - ./src/copaw_plugin_wechat:/app/working/custom_channels/wechat
 ```
 
-## 配置
+## 3. 安装依赖
+
+由于 CoPaw 运行在独立的虚拟环境中，你需要将插件依赖安装到该环境中：
+
+```bash
+# 1. 确保安装了 pip (如果报错 "No module named pip")
+curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+~/.copaw/venv/bin/python3 get-pip.py
+
+# 2. 安装插件依赖
+~/.copaw/venv/bin/python3 -m pip install -r requirements.txt
+```
+
+## 4. 故障排查（自检）
+
+如果插件没有正常加载，可以使用本项目提供的自检脚本进行诊断：
+
+```bash
+# 运行诊断脚本
+~/.copaw/venv/bin/python3 debug_copaw_setup.py
+```
+
+脚本会自动检查：
+- Python 环境依赖是否齐全
+- 插件目录软链接是否正确
+- 插件代码是否能被正确导入
+- `config.json` 中是否配置了 `wechat` 字段
+
+## 5. 配置 CoPaw
 
 CoPaw 启动后会加载插件。请在 `~/.copaw/config.json`（或 Docker 对应路径）的 `channels` 部分添加 `wechat` 配置项。
 

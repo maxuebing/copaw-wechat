@@ -34,6 +34,8 @@ from .handlers import handle_message
 logger = logging.getLogger(__name__)
 
 class WechatPlugin(BaseChannel):
+    channel = "wechat"
+    
     def __init__(self, config: WechatConfig):
         with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
             f.write(f"WechatPlugin initialized with config: {config}\n")

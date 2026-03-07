@@ -35,47 +35,55 @@ if missing_deps:
     sys.exit(1)
 
 print("\n[Step 2] Checking Plugin Directory...")
-plugin_path = os.path.expanduser("~/.copaw/plugins/wechat")
-if os.path.exists(plugin_path):
-    print(f"✅ Plugin directory found: {plugin_path}")
-    
-    # Add plugins directory to sys.path to simulate CoPaw loading
-    plugins_dir = os.path.dirname(plugin_path)
-    if plugins_dir not in sys.path:
-        sys.path.insert(0, plugins_dir)
-    
-    try:
-        # Try importing the plugin package
-        import wechat
-        print("✅ Plugin package 'wechat' imported successfully")
-        
-        if hasattr(wechat, "create_plugin"):
-             print("✅ 'create_plugin' function found")
-        else:
-             print("❌ 'create_plugin' function NOT found in __init__.py")
-             
-        # Verify Class Inheritance
-        try:
-            from copaw.app.channels.base import BaseChannel
-            from wechat.plugin import WechatPlugin
-            
-            if issubclass(WechatPlugin, BaseChannel):
-                print("✅ WechatPlugin correctly inherits from BaseChannel")
-            else:
-                print("❌ WechatPlugin does NOT inherit from BaseChannel")
-                print(f"   Bases: {WechatPlugin.__bases__}")
-        except Exception as e:
-            print(f"⚠️  Inheritance check skipped: {e}")
-            
-    except ImportError as e:
-        print(f"❌ Failed to import plugin: {e}")
-        import traceback
-        traceback.print_exc()
-else:
+copaw_home = os.path.expanduser("~/.copaw")
+# CoPaw uses 'custom_channels' directory for plugins, not 'plugins'
+plugin_path = os.path.join(copaw_home, "custom_channels", "wechat")
+
+if not os.path.exists(plugin_path):
     print(f"❌ Plugin directory NOT found: {plugin_path}")
-    print("   Please ensure softlink is created:")
-    print("   mkdir -p ~/.copaw/plugins")
-    print("   ln -s $(pwd)/src/copaw_plugin_wechat ~/.copaw/plugins/wechat")
+    print(f"   Fix: ln -s $(pwd)/src/copaw_plugin_wechat {plugin_path}")
+    
+    # Try checking old 'plugins' dir just in case user made a mistake
+    old_plugin_path = os.path.join(copaw_home, "plugins", "wechat")
+    if os.path.exists(old_plugin_path):
+        print(f"   ⚠️ Found plugin in '{old_plugin_path}' but CoPaw expects it in 'custom_channels'!")
+        print(f"   👉 Please move it: mv {old_plugin_path} {plugin_path}")
+    sys.exit(1)
+
+print(f"✅ Plugin directory found: {plugin_path}")
+
+# Add custom_channels directory to sys.path to simulate CoPaw loading
+custom_channels_dir = os.path.dirname(plugin_path)
+if custom_channels_dir not in sys.path:
+    sys.path.insert(0, custom_channels_dir)
+
+try:
+    # Try importing the plugin package
+    import wechat
+    print("✅ Plugin package 'wechat' imported successfully")
+    
+    if hasattr(wechat, "create_plugin"):
+         print("✅ 'create_plugin' function found")
+    else:
+         print("❌ 'create_plugin' function NOT found in __init__.py")
+         
+    # Verify Class Inheritance
+    try:
+        from copaw.app.channels.base import BaseChannel
+        from wechat.plugin import WechatPlugin
+        
+        if issubclass(WechatPlugin, BaseChannel):
+            print("✅ WechatPlugin correctly inherits from BaseChannel")
+        else:
+            print("❌ WechatPlugin does NOT inherit from BaseChannel")
+            print(f"   Bases: {WechatPlugin.__bases__}")
+    except Exception as e:
+        print(f"⚠️  Inheritance check skipped: {e}")
+        
+except ImportError as e:
+    print(f"❌ Failed to import plugin: {e}")
+    import traceback
+    traceback.print_exc()
 
 print("\n[Step 3] Checking Configuration...")
 config_path = os.path.expanduser("~/.copaw/config.json")
