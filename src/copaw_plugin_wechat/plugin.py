@@ -192,6 +192,7 @@ class WechatPlugin(BaseChannel):
                 try:
                     body = await request.body()
                     body_str = body.decode("utf-8")
+                    logger.info(f"Received WeCom POST request. Body: {body_str}")
                     
                     # 判断请求格式是否为 JSON
                     is_json_request = False
@@ -202,16 +203,17 @@ class WechatPlugin(BaseChannel):
                     except:
                         pass
 
+                    logger.info(f"Request format identified as: {'JSON' if is_json_request else 'XML'}")
+
                     msg = self.client.handle_message(msg_signature, timestamp, nonce, body_str)
                     
                     if msg:
+                        logger.info(f"Message decrypted successfully: {msg}")
                         # 转换消息对象为字典，以便传递给 ProcessHandler
-                        # 注意：这里需要根据 msg 类型进行转换，wechatpy 的 message 对象通常有转 dict 的方法或者属性
                         parsed_msg = await handle_message(msg)
                         
                         if self.agent_callback:
                             # 触发回调并检查是否有被动回复内容
-                            # 注意：被动回复必须在 5 秒内完成响应
                             reply_content = await self.agent_callback(parsed_msg)
                             
                             final_reply_content = None
@@ -221,25 +223,35 @@ class WechatPlugin(BaseChannel):
                                 final_reply_content = reply_content["content"]
                                 
                             if final_reply_content:
+                                logger.info(f"Generating passive reply: {final_reply_content}")
                                 reply_format = "json" if is_json_request else "xml"
                                 encrypted_reply = self.client.create_passive_reply(msg, final_reply_content, reply_format=reply_format)
                                 
                                 if reply_format == "json":
                                     # JSON 格式回复
-                                    return Response(content=json.dumps(encrypted_reply), media_type="application/json")
+                                    response_content = json.dumps(encrypted_reply)
+                                    logger.info(f"Sending JSON response: {response_content}")
+                                    return Response(content=response_content, media_type="application/json")
                                 else:
                                     # XML 格式回复
+                                    logger.info(f"Sending XML response: {encrypted_reply}")
                                     return Response(content=encrypted_reply, media_type="application/xml")
                         
                         # 默认返回 success
+                        logger.info("No passive reply generated, returning 'success'")
                         return Response(content="success", media_type="text/plain")
                     else:
+                        logger.warning("Handle message returned None, returning 'success'")
                         return Response(content="success", media_type="text/plain")
                 except InvalidSignatureException:
                     logger.error("Invalid signature")
                     raise HTTPException(status_code=403, detail="Invalid signature")
                 except Exception as e:
-                    logger.error(f"Receive message failed: {e}")
+                    logger.error(f"Receive message failed: {e}", exc_info=True)
+                    # 即使出错，也尝试返回 success 避免企业微信重试（参考 chain-bot 逻辑）
+                    # 但为了排查问题，这里先保留 500，或者根据用户需求改为 200 success
+                    # 用户反馈是“提示服务器返回有误”，如果返回 200 success，企业微信应该不会报错除非它期望特定响应
+                    # 暂时保持抛出异常以便在日志中看到错误
                     raise HTTPException(status_code=500, detail="Internal Server Error")
 
     async def send_text(self, to_user: str, content: str):
