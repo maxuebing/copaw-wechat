@@ -1,15 +1,17 @@
 # CoPaw WeChat (WeCom) 插件
 
-这是一个用于 [CoPaw](https://github.com/agentscope/copaw) 的企业微信（WeCom）插件，实现了与企业微信自建应用的对接。
+这是一个用于 [CoPaw](https://github.com/agentscope/copaw) 的企业微信（WeCom）插件，专注于**企业内部开发-服务端API-智能机器人**的对接。
 
-参考项目：[OpenClaw-Wechat](https://github.com/dingxiang-me/OpenClaw-Wechat)
+参考文档：[企业内部开发服务端API消息接收与发送智能机器人概述](https://developer.work.weixin.qq.com/document/path/101039)
+
+> **注意**：本项目已精简架构，移除了 `wechatpy` 依赖，完全使用官方提供的 `WechatMsgCrypt` (Python版) 进行加解密，确保与企业微信智能机器人的协议完美兼容。
 
 ## 功能特性
 
-- **消息接收**：支持接收文本、图片、语音、视频、文件等类型的消息。
-- **消息发送**：支持发送文本、图片消息。
-- **安全验证**：自动处理企业微信的回调 URL 签名验证和消息加解密。
-- **代理支持**：支持配置 HTTP/HTTPS 代理。
+- **消息接收**：仅支持接收**文本**消息。
+- **消息回复**：支持**被动回复**（XML/JSON 加密格式），暂不支持主动推送。
+- **安全验证**：自动处理企业微信的回调 URL 签名验证和消息加解密（AES-CBC + PKCS7）。
+- **协议兼容**：完美支持企业微信智能机器人的回调协议。
 
 ## 安装
 
@@ -39,7 +41,7 @@ volumes:
   - ./src/copaw_plugin_wechat:/app/working/custom_channels/wechat
 ```
 
-## 3. 安装依赖
+## 1. 安装依赖
 
 由于 CoPaw 运行在独立的虚拟环境中，你需要将插件依赖安装到该环境中：
 
@@ -52,7 +54,9 @@ curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 ~/.copaw/venv/bin/python3 -m pip install -r requirements.txt
 ```
 
-## 4. 故障排查（自检）
+> **注意**：本插件主要依赖 `pycryptodome` 进行加解密，不再需要安装 `wechatpy`。
+
+## 2. 注册插件
 
 如果插件没有正常加载，可以使用本项目提供的自检脚本进行诊断：
 
@@ -77,17 +81,24 @@ CoPaw 启动后会扫描 `custom_channels` 目录加载插件。请在 `~/.copaw
 - **本地部署**：默认配置文件路径为 `~/.copaw/config.json`。
 - **Docker 部署**：如果您使用的是官方 Docker 镜像并挂载了数据卷（如 `-v copaw-data:/app/working`），配置文件通常位于挂载卷对应的 `/app/working/config.json`（在宿主机上对应的路径取决于您的 Docker 卷配置）。
 
-### 配置参数说明
+## 配置说明
 
-| 参数名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `corp_id` | str | 是 | 企业微信 Corp ID (对应企业微信后台的 企业ID) |
-| `corp_secret` | str | 否 | 企业微信应用的 Secret (对应企业微信后台的 Secret)。**仅在需要主动发送消息（如流式回复）时必填** |
-| `agent_id` | int | 否 | 企业微信应用的 Agent ID。**仅在需要主动发送消息时必填** |
-| `token` | str | 是 | 回调 Token (对应企业微信后台的 Token) |
-| `encoding_aes_key` | str | 是 | 回调 EncodingAESKey (对应企业微信后台的 EncodingAESKey) |
-| `webhook_path` | str | 否 | Webhook 路径，默认为 `/wecom/callback` |
-| `outbound_proxy` | str | 否 | HTTP 代理地址，例如 `http://127.0.0.1:7890` |
+插件支持通过 `config.json` 进行配置，主要涉及企业微信智能机器人的回调参数。
+
+### 必需参数
+
+| 参数名 | 说明 |
+| :--- | :--- |
+| `corp_id` | 企业微信 Corp ID (对应企业微信后台的 企业ID) |
+| `token` | 回调 Token (对应企业微信后台的 Token) |
+| `encoding_aes_key` | 回调 EncodingAESKey (对应企业微信后台的 EncodingAESKey) |
+| `webhook_path` | Webhook 路径，默认为 `/wecom/callback` |
+
+### 可选参数
+
+| 参数名 | 说明 |
+| :--- | :--- |
+| `outbound_proxy` | HTTP 代理地址，例如 `http://127.0.0.1:7890` |
 
 ### 配置示例
 
@@ -100,8 +111,6 @@ CoPaw 启动后会扫描 `custom_channels` 目录加载插件。请在 `~/.copaw
       "token": "xxxxxxxxxxxx",
       "encoding_aes_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "webhook_path": "/wecom/callback"
-      // "corp_secret": "仅在主动发消息时需要",
-      // "agent_id": 1000001
     }
   }
 }

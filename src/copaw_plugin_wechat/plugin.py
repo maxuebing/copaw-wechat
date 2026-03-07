@@ -9,8 +9,6 @@ from fastapi import APIRouter, Request, HTTPException, Response
 
 from typing import Optional, Callable, Dict, Any, Union, List
 from pydantic import ValidationError
-from wechatpy.messages import BaseMessage
-from wechatpy.exceptions import InvalidSignatureException
 
 # 修正导入路径：从 copaw.app.channels.base 导入
 try:
@@ -34,10 +32,9 @@ from .config import WechatConfig
 from .wechat_client import WechatClient
 from .handlers import handle_message
 
-# 强制配置日志，确保输出
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# 配置日志
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 class WechatPlugin(BaseChannel):
     channel = "wechat"
@@ -64,7 +61,7 @@ class WechatPlugin(BaseChannel):
         self.config = config
         self.client = WechatClient(config)
         self.router = APIRouter()
-        self.agent_callback: Optional[Callable[[Dict[str, Any]], Union[None, str, Dict[str, Any]]]] = None
+        self.agent_callback = None
         
         self.setup_routes()
 
@@ -158,8 +155,7 @@ class WechatPlugin(BaseChannel):
 
     def register_agent_callback(self, callback: Callable[[Dict[str, Any]], Union[None, str, Dict[str, Any]]]):
         """
-        注册 Agent 回调函数，用于将消息传递给 CoPaw
-        如果回调函数返回字符串，则插件会尝试进行“被动回复”。
+        注册 Agent 回调函数
         """
         self.agent_callback = callback
 
@@ -180,12 +176,12 @@ class WechatPlugin(BaseChannel):
                 echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
                 logger.info(f"URL verified successfully. Returning echo_str: {echo_str}")
                 return Response(content=echo_str, media_type="text/plain")
-            except InvalidSignatureException:
-                logger.error("Invalid signature during URL verification")
-                raise HTTPException(status_code=403, detail="Invalid signature")
             except Exception as e:
-                logger.error(f"Verify URL failed: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail="Internal Server Error")
+                    if str(e) == "Invalid Signature":
+                        logger.error("Invalid signature during URL verification")
+                        raise HTTPException(status_code=403, detail="Invalid signature")
+                    logger.error(f"Verify URL failed: {e}", exc_info=True)
+                    raise HTTPException(status_code=500, detail="Internal Server Error")
 
         @self.router.post(self.config.webhook_path)
         async def receive_message(
@@ -225,7 +221,7 @@ class WechatPlugin(BaseChannel):
                     # 转换消息对象为字典
                     parsed_msg = await handle_message(msg)
                     
-                    if self.agent_callback:
+                    if parsed_msg and self.agent_callback:
                         # 触发回调并检查是否有被动回复内容
                         reply_content = await self.agent_callback(parsed_msg)
                         
@@ -256,27 +252,29 @@ class WechatPlugin(BaseChannel):
                 else:
                     logger.warning("Decrypted message is empty, returning 'success'")
                     return Response(content="success", media_type="text/plain")
-            except InvalidSignatureException:
-                logger.error("Invalid signature during message reception")
-                raise HTTPException(status_code=403, detail="Invalid signature")
             except Exception as e:
-                logger.error(f"Message processing failed: {e}", exc_info=True)
-                # 即使出错也返回 success 避免企业微信重复推送
-                return Response(content="success", media_type="text/plain")
+                    if str(e) == "Invalid Signature":
+                        logger.error("Invalid signature during message reception")
+                        raise HTTPException(status_code=403, detail="Invalid signature")
+                    logger.error(f"Message processing failed: {e}", exc_info=True)
+                    # 即使出错也返回 success 避免企业微信重复推送
+                    return Response(content="success", media_type="text/plain")
 
     async def send_text(self, to_user: str, content: str):
         """
-        发送文本消息
+        发送文本消息 (暂未实现主动发送)
         """
-        return self.client.send_text(to_user, content)
+        # return self.client.send_text(to_user, content)
+        pass
 
     async def send_image(self, to_user: str, image_path: str):
         """
-        发送图片消息
+        发送图片消息 (暂未实现主动发送)
         """
-        with open(image_path, 'rb') as f:
-            media_id = self.client.upload_media('image', f)['media_id']
-        return self.client.send_image(to_user, media_id)
+        pass
+        # with open(image_path, 'rb') as f:
+        #     media_id = self.client.upload_media('image', f)['media_id']
+        # return self.client.send_image(to_user, media_id)
 
 def create_plugin(config_dict: dict) -> WechatPlugin:
     """

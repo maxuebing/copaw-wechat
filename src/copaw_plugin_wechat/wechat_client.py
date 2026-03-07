@@ -2,17 +2,11 @@ import logging
 import json
 import xml.etree.ElementTree as ET
 from typing import Optional, Dict, Any, Union
-from wechatpy.enterprise import WeChatClient as BaseWeChatClient
-# from wechatpy.enterprise.crypto import WeChatCrypto
-from .wechat_msg_crypt import WechatMsgCrypt
-from wechatpy.exceptions import InvalidSignatureException
-from wechatpy.enterprise.exceptions import InvalidCorpIdException
-from wechatpy import parse_message
-from wechatpy.replies import TextReply
 import requests
 import time
 import random
 
+from .wechat_msg_crypt import WechatMsgCrypt
 from .config import WechatConfig
 
 logger = logging.getLogger(__name__)
@@ -20,23 +14,6 @@ logger = logging.getLogger(__name__)
 class WechatClient:
     def __init__(self, config: WechatConfig):
         self.config = config
-        self.client: Optional[BaseWeChatClient] = None
-        
-        # 仅当配置了 corp_secret 时初始化主动发送客户端
-        if self.config.corp_secret:
-            self.client = BaseWeChatClient(
-                self.config.corp_id,
-                self.config.corp_secret
-            )
-            
-            # 如果配置了代理，设置 session 代理
-            if self.config.outbound_proxy:
-                proxies = {
-                    "http": self.config.outbound_proxy,
-                    "https": self.config.outbound_proxy
-                }
-                self.client.session.proxies.update(proxies)
-        
         self.crypto = WechatMsgCrypt(
             self.config.token,
             self.config.encoding_aes_key,
@@ -56,7 +33,7 @@ class WechatClient:
             )
         except Exception as e:
             logger.error(f"Verify signature failed: {e}")
-            raise InvalidSignatureException()
+            raise Exception("Invalid Signature")
 
     def handle_message(self, signature: str, timestamp: str, nonce: str, data: Union[str, bytes]) -> Optional[Dict[str, Any]]:
         """
@@ -105,48 +82,57 @@ class WechatClient:
                     logger.error(f"Parse XML failed: {e}")
                     return None
 
+            logger.info(f"Decrypted content: {decrypted_content}")
+            
+            # 解析解密后的内容
+            msg = None
+            if decrypted_content.strip().startswith('<'):
+                # XML 格式的消息内容
+                try:
+                    root = ET.fromstring(decrypted_content)
+                    msg_dict = {}
+                    for child in root:
+                        msg_dict[child.tag] = child.text
+                    
+                    # 标准化字段
+                    msg = {
+                        "type": msg_dict.get("MsgType", "unknown"),
+                        "msgid": msg_dict.get("MsgId", 0),
+                        "source": msg_dict.get("FromUserName"),
+                        "target": msg_dict.get("ToUserName"),
+                        "create_time": int(msg_dict.get("CreateTime", 0)),
+                        "content": msg_dict.get("Content", ""),
+                        "raw": msg_dict
+                    }
+                except Exception as e:
+                    logger.error(f"Parse decrypted XML failed: {e}")
+                    return None
+            elif decrypted_content.strip().startswith('{'):
+                # JSON 格式的消息内容
+                msg_dict = json.loads(decrypted_content)
+                
+                # 标准化字段
+                msg = {
+                    "type": msg_dict.get("msgtype", "unknown"),
+                    "msgid": msg_dict.get("msgid", 0),
+                    "source": msg_dict.get("FromUserName") or msg_dict.get("from", {}).get("userid"),
+                    "target": msg_dict.get("ToUserName") or msg_dict.get("to"),
+                    "create_time": int(time.time()), # JSON通常不带CreateTime，或者是在外层
+                    "content": msg_dict.get("text", {}).get("content", "") if msg_dict.get("msgtype") == "text" else "",
+                    "raw": msg_dict
+                }
+            
+            logger.info(f"Received message dict: {msg}")
+            return msg
+
         except Exception as e:
             logger.error(f"Failed to decrypt message: {e}")
             raise
 
-        logger.info(f"Decrypted content: {decrypted_content}")
-        
-        # 解析解密后的内容
-        # 如果是 XML 字符串，使用 wechatpy.parse_message
-        # 如果是 JSON 字符串，解析为 dict 并尝试转换为 wechatpy message 对象（如果需要）
-        # 目前 copaw 逻辑是后续 handle_message 需要 message 对象
-        
-        msg = None
-        if decrypted_content.strip().startswith('<'):
-            msg = parse_message(decrypted_content)
-        elif decrypted_content.strip().startswith('{'):
-            # JSON 格式的消息内容
-            # 这里需要适配，因为 copaw 下游可能期待 wechatpy 的 Message 对象
-            # 暂时先尝试解析为 dict，然后手动构造一个类似的 object 或者 TextMessage
-            msg_dict = json.loads(decrypted_content)
-            # 简单的适配：构造一个名为 object 的类
-            class DictToObj:
-                def __init__(self, **entries):
-                    self.__dict__.update(entries)
-                    self.type = entries.get("msgtype", "text") # default text
-                    self.id = entries.get("msgid", 0)
-                    self.source = entries.get("FromUserName") or entries.get("from", {}).get("userid")
-                    self.target = entries.get("ToUserName") or entries.get("to")
-                    self.create_time = int(time.time()) # approx
-                    
-                    if self.type == 'text':
-                         self.content = entries.get("text", {}).get("content", "")
-            
-            msg = DictToObj(**msg_dict)
-        
-        logger.info(f"Received message object: {msg}")
-        return msg
-
-    def create_passive_reply(self, msg: Any, content: str, reply_format: str = "xml") -> Union[str, Dict[str, Any]]:
+    def create_passive_reply(self, msg: Dict[str, Any], content: str, reply_format: str = "xml") -> Union[str, Dict[str, Any]]:
         """
         生成被动回复消息 (XML 格式且加密，或者 JSON 格式且加密)
         """
-        # 构造回复 JSON
         timestamp = str(int(time.time()))
         nonce = str(random.randint(100000, 999999))
         
@@ -167,11 +153,15 @@ class WechatClient:
             return json.loads(encrypted_json_str)
         else:
             # XML 回复
-            reply = TextReply(content=content, message=msg)
-            xml_content = reply.render()
+            xml_content = f"""<xml>
+<ToUserName><![CDATA[{msg['source']}]]></ToUserName>
+<FromUserName><![CDATA[{msg['target']}]]></FromUserName>
+<CreateTime>{timestamp}</CreateTime>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[{content}]]></Content>
+</xml>"""
             
             # 手动加密 XML
-            # 我们直接调用内部的 PrpCrypt 加密
             from .wechat_msg_crypt import PrpCrypt, Sha1
             pc = PrpCrypt(self.crypto.key)
             # receive_id 通常是 CorpID
