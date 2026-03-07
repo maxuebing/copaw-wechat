@@ -26,7 +26,7 @@ pip install -r requirements.txt
 ```
 
 3. **注册插件**：
-将插件源码软链接或拷贝到 CoPaw 的自定义插件目录（注意：必须是 `custom_channels`）：
+将插件源码软链接或拷贝到 CoPaw 的自定义插件目录（注意：必须是 `custom_channels`，不是 `plugins`）：
 - **本地部署**：
 ```bash
 mkdir -p ~/.copaw/custom_channels
@@ -63,13 +63,16 @@ curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 
 脚本会自动检查：
 - Python 环境依赖是否齐全
-- 插件目录软链接是否正确
+- 插件目录软链接是否正确（是否在 `custom_channels` 下）
 - 插件代码是否能被正确导入
+- 插件类是否正确继承自 `BaseChannel` 并实现了 `from_config`
 - `config.json` 中是否配置了 `wechat` 字段
 
 ## 5. 配置 CoPaw
 
-CoPaw 启动后会加载插件。请在 `~/.copaw/config.json`（或 Docker 对应路径）的 `channels` 部分添加 `wechat` 配置项。
+CoPaw 启动后会扫描 `custom_channels` 目录加载插件。请在 `~/.copaw/config.json`（或 Docker 对应路径）的 `channels` 部分添加 `wechat` 配置项。
+
+**注意：配置必须放在 `channels` 字典下！**
 
 - **本地部署**：默认配置文件路径为 `~/.copaw/config.json`。
 - **Docker 部署**：如果您使用的是官方 Docker 镜像并挂载了数据卷（如 `-v copaw-data:/app/working`），配置文件通常位于挂载卷对应的 `/app/working/config.json`（在宿主机上对应的路径取决于您的 Docker 卷配置）。
