@@ -1,5 +1,11 @@
 import logging
+import os
 from fastapi import APIRouter, Request, HTTPException, Response
+
+# 核武器级调试：只要文件被加载，就写文件
+with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+    f.write("WechatPlugin module loaded by Python interpreter!\n")
+
 from typing import Optional, Callable, Dict, Any, Union, List
 from pydantic import ValidationError
 from wechatpy.messages import BaseMessage
@@ -8,7 +14,11 @@ from wechatpy.exceptions import InvalidSignatureException
 # 修正导入路径：从 copaw.app.channels.base 导入
 try:
     from copaw.app.channels.base import BaseChannel
-except ImportError:
+    with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+        f.write("BaseChannel imported successfully!\n")
+except ImportError as e:
+    with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+        f.write(f"BaseChannel import failed: {e}\n")
     # 兼容本地开发环境可能没有 copaw 包的情况
     class BaseChannel:
         def __init__(self, config: Any): pass
@@ -25,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 class WechatPlugin(BaseChannel):
     def __init__(self, config: WechatConfig):
+        with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+            f.write(f"WechatPlugin initialized with config: {config}\n")
         self.config = config
         self.client = WechatClient(config)
         self.router = APIRouter()
