@@ -2,6 +2,7 @@ import logging
 import json
 import os
 from fastapi import APIRouter, Request, HTTPException, Response
+from fastapi.responses import PlainTextResponse
 
 # 核武器级调试：只要文件被加载，就写文件
 # with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
@@ -175,7 +176,7 @@ class WechatPlugin(BaseChannel):
             try:
                 echo_str = self.client.verify_signature(msg_signature, timestamp, nonce, echostr)
                 logger.info(f"URL verified successfully. Returning echo_str: {echo_str}")
-                return Response(content=echo_str, media_type="text/plain")
+                return PlainTextResponse(content=echo_str)
             except Exception as e:
                     if str(e) == "Invalid Signature":
                         logger.error("Invalid signature during URL verification")

@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, Union
 import requests
 import time
 import random
+from urllib.parse import unquote
 
 from .wechat_msg_crypt import WechatMsgCrypt
 from .config import WechatConfig
@@ -17,7 +18,7 @@ class WechatClient:
         self.crypto = WechatMsgCrypt(
             self.config.token,
             self.config.encoding_aes_key,
-            self.config.corp_id
+            ""
         )
 
     def verify_signature(self, signature: str, timestamp: str, nonce: str, echostr: str) -> str:
@@ -25,12 +26,14 @@ class WechatClient:
         验证回调 URL 签名
         """
         try:
-            return self.crypto.verify_url(
+            normalized_echostr = unquote(echostr)
+            decrypted = self.crypto.verify_url(
                 signature,
                 timestamp,
                 nonce,
-                echostr
+                normalized_echostr
             )
+            return decrypted.rstrip("\r\n")
         except Exception as e:
             logger.error(f"Verify signature failed: {e}")
             raise Exception("Invalid Signature")

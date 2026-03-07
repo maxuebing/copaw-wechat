@@ -303,32 +303,38 @@ class PrpCrypt:
             tuple: (状态码, 解密后的JSON内容)
         """
         try:
-            # 确保receive_id为字节类型以便比较
             if isinstance(receive_id, str):
                 receive_id = receive_id.encode('utf-8')
-                
-            # 解密
+            if isinstance(text, str):
+                text = text.strip()
+
             cryptor = AES.new(self.key, self.mode, self.key[:16])
             plain_text = cryptor.decrypt(base64.b64decode(text))
-            
-            # 获取填充字节数并去除填充
+
+            if len(plain_text) < 20:
+                throw_exception("解密后明文长度非法", FormatException)
+
             pad = plain_text[-1]
-            if not (1 <= pad <= 32):
-                pad = 0
-                
-            # 解析内容
-            content = plain_text[16:-pad] if pad > 0 else plain_text[16:]
-            json_len = socket.ntohl(struct.unpack("I", content[:4])[0])
-            json_content = content[4:json_len + 4]
-            from_receive_id = content[json_len + 4:]
-            
-            # 验证receive_id
-            if len(from_receive_id) > 0 and from_receive_id != receive_id:
+            if not 1 <= pad <= 32:
+                throw_exception("解密后补位长度非法", FormatException)
+
+            content = plain_text[16:-pad]
+            if len(content) < 4:
+                throw_exception("解密后消息体长度非法", FormatException)
+
+            msg_len = socket.ntohl(struct.unpack("I", content[:4])[0])
+            if msg_len < 0 or msg_len > len(content) - 4:
+                throw_exception("解密后消息长度非法", FormatException)
+
+            json_content = content[4:msg_len + 4]
+            from_receive_id = content[msg_len + 4:]
+
+            if from_receive_id != receive_id:
                 throw_exception(
                     f"receive_id不匹配。期望：{receive_id}，实际：{from_receive_id}",
                     FormatException,
                 )
-                
+
             return 0, json_content.decode('utf-8')
         except Exception as e:
             logger.error(f"解密失败: {e}")
