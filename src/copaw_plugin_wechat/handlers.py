@@ -1,5 +1,7 @@
 import logging
-from wechatpy.messages import TextMessage, ImageMessage, VoiceMessage, VideoMessage, FileMessage
+from wechatpy.messages import TextMessage, ImageMessage, VoiceMessage, VideoMessage
+# FileMessage 可能在某些版本不可用，暂时移除
+# from wechatpy.messages import FileMessage
 from wechatpy.events import SubscribeEvent, UnsubscribeEvent, ClickEvent, ViewEvent, LocationEvent
 
 logger = logging.getLogger(__name__)
@@ -24,9 +26,9 @@ async def handle_message(msg):
         logger.info(f"Received video message from {msg.source}: {msg.media_id}")
         return {"type": "video", "content": msg.media_id, "source": msg.source}
     
-    elif isinstance(msg, FileMessage):
-        logger.info(f"Received file message from {msg.source}: {msg.media_id}")
-        return {"type": "file", "content": msg.media_id, "source": msg.source}
+    # elif isinstance(msg, FileMessage):
+    #     logger.info(f"Received file message from {msg.source}: {msg.media_id}")
+    #     return {"type": "file", "content": msg.media_id, "source": msg.source}
 
     # 事件处理
     elif isinstance(msg, SubscribeEvent):

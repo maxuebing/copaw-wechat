@@ -87,14 +87,21 @@ if os.path.exists(config_path):
             print(f"📄 Config content:\n{content}")
             config = json.loads(content)
             
+        wechat_conf = None
         if "wechat" in config:
             wechat_conf = config["wechat"]
+            print("✅ Found 'wechat' in root config")
+        elif "channels" in config and "wechat" in config["channels"]:
+            wechat_conf = config["channels"]["wechat"]
+            print("✅ Found 'wechat' in 'channels' config")
+            
+        if wechat_conf:
             if wechat_conf.get("enabled", False):
                  print("✅ 'wechat' is ENABLED in config")
             else:
                  print("❌ 'wechat' is DISABLED in config (set 'enabled': true)")
         else:
-            print("❌ 'wechat' key missing in config.json")
+            print("❌ 'wechat' key missing in config.json (checked root and 'channels')")
     except Exception as e:
         print(f"❌ Config check failed: {e}")
 else:
