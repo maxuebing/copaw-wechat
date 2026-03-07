@@ -13,19 +13,35 @@
 
 ## 安装
 
-1. 确保已安装 Python 3.8+。
-2. 克隆仓库并安装：
-
+1. **克隆源码**：
 ```bash
 git clone git@github.com:maxuebing/copaw-wechat.git
 cd copaw-wechat
+```
+
+2. **安装依赖**：
+请确保将依赖安装到 CoPaw 运行的环境中。
+```bash
 pip install -r requirements.txt
-pip install .
+```
+
+3. **注册插件**：
+将插件源码软链接或拷贝到 CoPaw 的插件目录下：
+- **本地部署**：
+```bash
+mkdir -p ~/.copaw/plugins
+ln -s $(pwd)/src/copaw_plugin_wechat ~/.copaw/plugins/wechat
+```
+- **Docker 部署**：
+在 `docker-compose.yml` 中挂载目录：
+```yaml
+volumes:
+  - ./src/copaw_plugin_wechat:/app/working/plugins/wechat
 ```
 
 ## 配置
 
-CoPaw 会在工作目录下生成配置文件。请在 `channels` 部分添加 `wechat` 配置项。
+CoPaw 启动后会加载插件。请在 `~/.copaw/config.json`（或 Docker 对应路径）的 `channels` 部分添加 `wechat` 配置项。
 
 - **本地部署**：默认配置文件路径为 `~/.copaw/config.json`。
 - **Docker 部署**：如果您使用的是官方 Docker 镜像并挂载了数据卷（如 `-v copaw-data:/app/working`），配置文件通常位于挂载卷对应的 `/app/working/config.json`（在宿主机上对应的路径取决于您的 Docker 卷配置）。
