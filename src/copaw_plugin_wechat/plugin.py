@@ -5,10 +5,9 @@ from pydantic import ValidationError
 from wechatpy.messages import BaseMessage
 from wechatpy.exceptions import InvalidSignatureException
 
-# 假设 CoPaw 的基类路径，根据之前的 Traceback 推测
-# 如果环境里找不到这个基类，我们需要更灵活的处理
+# 修正导入路径：从 copaw.app.channels.base 导入
 try:
-    from copaw.app.channel.base import BaseChannel
+    from copaw.app.channels.base import BaseChannel
 except ImportError:
     # 兼容本地开发环境可能没有 copaw 包的情况
     class BaseChannel:
