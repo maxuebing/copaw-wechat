@@ -1,5 +1,7 @@
 import logging
-from typing import Optional, Dict, Any
+import json
+import xml.etree.ElementTree as ET
+from typing import Optional, Dict, Any, Union
 from wechatpy.enterprise import WeChatClient as BaseWeChatClient
 from wechatpy.enterprise.crypto import WeChatCrypto
 from wechatpy.exceptions import InvalidSignatureException
@@ -55,20 +57,52 @@ class WechatClient:
             logger.error("Invalid signature")
             raise
 
-    def handle_message(self, signature: str, timestamp: str, nonce: str, xml_data: str) -> Optional[Dict[str, Any]]:
+    def handle_message(self, signature: str, timestamp: str, nonce: str, data: Union[str, bytes]) -> Optional[Dict[str, Any]]:
         """
         处理接收到的消息
         1. 验证签名
         2. 解密消息
-        3. 解析 XML
+        3. 解析 XML 或 JSON
         """
         try:
-            decrypted_xml = self.crypto.decrypt_message(
-                xml_data,
-                signature,
-                timestamp,
-                nonce
-            )
+            if isinstance(data, bytes):
+                data = data.decode('utf-8')
+
+            # 尝试判断是否为 JSON
+            is_json = False
+            try:
+                if data.strip().startswith('{'):
+                    json_data = json.loads(data)
+                    is_json = True
+            except json.JSONDecodeError:
+                is_json = False
+
+            if is_json:
+                # 处理 JSON 格式
+                encrypt_content = json_data.get("encrypt") or json_data.get("Encrypt")
+                if not encrypt_content:
+                    logger.error("Missing encrypt field in JSON")
+                    return None
+                
+                # 构造伪 XML 以利用 wechatpy 进行解密
+                # 注意：WeChatCrypto.decrypt_message 内部会解析 XML 提取 Encrypt 节点
+                # 我们构造一个包含 Encrypt 节点的 XML
+                fake_xml = f"<xml><ToUserName><![CDATA[{self.config.corp_id}]]></ToUserName><Encrypt><![CDATA[{encrypt_content}]]></Encrypt></xml>"
+                decrypted_xml = self.crypto.decrypt_message(
+                    fake_xml,
+                    signature,
+                    timestamp,
+                    nonce
+                )
+            else:
+                # 处理 XML 格式
+                decrypted_xml = self.crypto.decrypt_message(
+                    data,
+                    signature,
+                    timestamp,
+                    nonce
+                )
+                
         except (InvalidSignatureException, InvalidCorpIdException) as e:
             logger.error(f"Failed to decrypt message: {e}")
             raise
@@ -78,15 +112,36 @@ class WechatClient:
             
         return msg
 
-    def create_passive_reply(self, msg: Any, content: str) -> str:
+    def create_passive_reply(self, msg: Any, content: str, reply_format: str = "xml") -> Union[str, Dict[str, Any]]:
         """
-        生成被动回复消息 (XML 格式且加密)
+        生成被动回复消息 (XML 格式且加密，或者 JSON 格式且加密)
         """
         reply = TextReply(content=content, message=msg)
         xml = reply.render()
         timestamp = str(int(time.time()))
         nonce = str(random.randint(100000, 999999))
-        return self.crypto.encrypt_message(xml, nonce, timestamp)
+        
+        encrypted_xml = self.crypto.encrypt_message(xml, nonce, timestamp)
+        
+        if reply_format == "json":
+            # 解析加密后的 XML，提取字段并构造 JSON
+            try:
+                root = ET.fromstring(encrypted_xml)
+                encrypt_content = root.find("Encrypt").text
+                msg_signature = root.find("MsgSignature").text
+                
+                return {
+                    "encrypt": encrypt_content,
+                    "msgsignature": msg_signature,
+                    "timestamp": timestamp,
+                    "nonce": nonce
+                }
+            except Exception as e:
+                logger.error(f"Failed to convert encrypted XML to JSON: {e}")
+                # Fallback to XML if conversion fails
+                return encrypted_xml
+        
+        return encrypted_xml
 
     def send_text(self, user_id: str, content: str):
         """

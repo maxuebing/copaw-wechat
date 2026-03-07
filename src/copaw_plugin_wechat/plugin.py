@@ -1,10 +1,11 @@
 import logging
+import json
 import os
 from fastapi import APIRouter, Request, HTTPException, Response
 
 # 核武器级调试：只要文件被加载，就写文件
-with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
-    f.write("WechatPlugin module loaded by Python interpreter!\n")
+# with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+#    f.write("WechatPlugin module loaded by Python interpreter!\n")
 
 from typing import Optional, Callable, Dict, Any, Union, List
 from pydantic import ValidationError
@@ -14,11 +15,11 @@ from wechatpy.exceptions import InvalidSignatureException
 # 修正导入路径：从 copaw.app.channels.base 导入
 try:
     from copaw.app.channels.base import BaseChannel, ProcessHandler, OnReplySent
-    with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
-        f.write("BaseChannel imported successfully!\n")
+    # with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+    #    f.write("BaseChannel imported successfully!\n")
 except ImportError as e:
-    with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
-        f.write(f"BaseChannel import failed: {e}\n")
+    # with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+    #    f.write(f"BaseChannel import failed: {e}\n")
     # 兼容本地开发环境可能没有 copaw 包的情况
     class BaseChannel:
         def __init__(self, *args, **kwargs): pass
@@ -47,8 +48,8 @@ class WechatPlugin(BaseChannel):
         filter_tool_messages: bool = False,
         filter_thinking: bool = False,
     ):
-        with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
-            f.write(f"WechatPlugin initialized with config: {config}\n")
+        # with open(os.path.expanduser("~/copaw_plugin_debug.log"), "a") as f:
+        #    f.write(f"WechatPlugin initialized with config: {config}\n")
             
         super().__init__(
             process=process,
@@ -182,8 +183,19 @@ class WechatPlugin(BaseChannel):
             接收消息回调 (POST 请求)
             """
             try:
-                xml_data = await request.body()
-                msg = self.client.handle_message(msg_signature, timestamp, nonce, xml_data)
+                body = await request.body()
+                body_str = body.decode("utf-8")
+                
+                # 判断请求格式是否为 JSON
+                is_json_request = False
+                try:
+                    if body_str.strip().startswith('{'):
+                        json.loads(body_str)
+                        is_json_request = True
+                except:
+                    pass
+
+                msg = self.client.handle_message(msg_signature, timestamp, nonce, body_str)
                 
                 if msg:
                     parsed_msg = await handle_message(msg)
@@ -192,12 +204,20 @@ class WechatPlugin(BaseChannel):
                         # 注意：被动回复必须在 5 秒内完成响应
                         reply_content = await self.agent_callback(parsed_msg)
                         
+                        final_reply_content = None
                         if reply_content and isinstance(reply_content, str):
-                            encrypted_reply = self.client.create_passive_reply(msg, reply_content)
-                            return Response(content=encrypted_reply, media_type="application/xml")
+                            final_reply_content = reply_content
                         elif reply_content and isinstance(reply_content, dict) and reply_content.get("type") == "text":
-                            encrypted_reply = self.client.create_passive_reply(msg, reply_content["content"])
-                            return Response(content=encrypted_reply, media_type="application/xml")
+                            final_reply_content = reply_content["content"]
+                        
+                        if final_reply_content:
+                            reply_format = "json" if is_json_request else "xml"
+                            encrypted_reply = self.client.create_passive_reply(msg, final_reply_content, reply_format=reply_format)
+                            
+                            if reply_format == "json":
+                                return Response(content=json.dumps(encrypted_reply), media_type="application/json")
+                            else:
+                                return Response(content=encrypted_reply, media_type="application/xml")
                     
                     return Response(content="success", media_type="text/plain")
                 else:
