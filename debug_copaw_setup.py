@@ -83,7 +83,9 @@ if os.path.exists(config_path):
     print(f"✅ config.json found: {config_path}")
     try:
         with open(config_path, 'r') as f:
-            config = json.load(f)
+            content = f.read()
+            print(f"📄 Config content:\n{content}")
+            config = json.loads(content)
             
         if "wechat" in config:
             wechat_conf = config["wechat"]

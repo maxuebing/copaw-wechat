@@ -4,7 +4,7 @@ from wechatpy.enterprise import WeChatClient as BaseWeChatClient
 from wechatpy.enterprise.crypto import WeChatCrypto
 from wechatpy.exceptions import InvalidSignatureException
 from wechatpy.enterprise.exceptions import InvalidCorpIdException
-from wechatpy.messages import parse_message
+from wechatpy import parse_message
 from wechatpy.replies import TextReply
 import requests
 import time
