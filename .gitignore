@@ -30,3 +30,6 @@ Thumbs.db
 *.key
 *.pem
 media/
+
+# Spec Workflow 模板
+.spec-workflow/
