@@ -13,35 +13,41 @@
 
 ## 安装
 
-### 从源码安装
+### 方式一：软链接安装（推荐）
 
 ```bash
-# 克隆仓库
+# 1. 克隆仓库
 git clone https://github.com/maxuebing/copaw-wechat.git
 cd copaw-wechat
 
-# 安装依赖
+# 2. 创建软链接到 CoPaw 自定义频道目录
+ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
+
+# 3. 安装依赖
 pip install -r requirements.txt
 
-# 安装插件（开发模式）
-pip install -e .
+# 4. 重启 CoPaw 服务
+copaw app
+```
+
+### 方式二：直接复制
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/maxuebing/copaw-wechat.git
+cd copaw-wechat
+
+# 2. 复制到 CoPaw 自定义频道目录
+cp -r wecom ~/.copaw/custom_channels/
+
+# 3. 安装依赖
+pip install -r requirements.txt
+
+# 4. 重启 CoPaw 服务
+copaw app
 ```
 
 ## 配置
-
-### 环境变量
-
-| 环境变量 | 说明 | 必填 |
-|----------|------|------|
-| `WECOM_CHANNEL_ENABLED` | 是否启用 | 否 |
-| `WECOM_CORP_ID` | 企业 ID | 是 |
-| `WECOM_SECRET` | 应用 Secret | 是 |
-| `WECOM_AIBOT_ID` | 智能机器人 ID | 是 |
-| `WECOM_TOKEN` | 回调验证 Token | 是 |
-| `WECOM_ENCODING_AES_KEY` | 加解密 Key（43 字符） | 是 |
-| `WECOM_BOT_PREFIX` | 机器人前缀 | 否 |
-| `WECOM_CALLBACK_HOST` | 回调服务器地址 | 否 |
-| `WECOM_CALLBACK_PORT` | 回调服务器端口 | 否 |
 
 ### Config JSON
 
@@ -56,38 +62,19 @@ pip install -e .
       "secret": "your_secret",
       "aibot_id": "AIBOTID",
       "token": "your_token",
-      "encoding_aes_key": "kWxPEV2UEDyxWpmyfnZero4FJfiPZOyP2JfV8LqMyj",
-      "bot_prefix": "[BOT] ",
-      "callback_host": "0.0.0.0",
-      "callback_port": 8765
+      "encoding_aes_key": "43字符的Base64密钥",
+      "bot_prefix": "[BOT] "
     }
   }
 }
 ```
 
-## 企业微信配置
+### 企业微信后台配置
 
-### 1. 创建智能机器人
-
-1. 登录企业微信管理后台
-2. 进入「应用管理」→「应用」→「自建」
-3. 创建应用，选择「智能机器人」能力
-
-### 2. 配置回调
-
-在应用详情页：
-
-1. 进入「智能机器人」→「回调配置」
-2. 填写回调 URL：`http://your-server:8765/wecom/callback`
-3. 配置 Token 和 EncodingAESKey
+1. 创建智能机器人应用
+2. 配置回调 URL: `http://your-server:8765/wecom/callback`
+3. 设置 Token 和 EncodingAESKey
 4. 启用「接收消息」事件
-
-### 3. 获取凭证
-
-在「应用管理」→「应用」中获取：
-- 企业 ID (corp_id)
-- 应用 Secret (secret)
-- 智能机器人 ID (aibot_id)
 
 ## 使用
 
@@ -96,6 +83,34 @@ pip install -e .
 ```bash
 copaw app
 ```
+
+## 验证安装
+
+```bash
+# 查看软链接
+ls -la ~/.copaw/custom_channels/wecom
+
+# 查看 CoPaw 识别的频道
+copaw channels list
+```
+
+## 目录结构
+
+```
+wecom/
+├── __init__.py      # 包入口，导出 WeComChannel
+├── channel.py       # WeComChannel 主类
+├── constants.py     # 常量定义
+├── crypto.py        # 加解密工具
+├── utils.py         # 工具函数
+└── config.py        # 配置类
+```
+
+## 依赖
+
+- `aiohttp>=3.8.0` - HTTP 客户端和服务器
+- `pycryptodome>=3.15.0` - 加解密库
+- `agentscope-runtime` - CoPaw 运行时
 
 ## 开发
 
@@ -118,11 +133,18 @@ ruff check .
 mypy .
 ```
 
-## 依赖
+## 卸载
 
-- `aiohttp` - HTTP 客户端和服务器
-- `pycryptodome` - 加解密库
-- `agentscope-runtime` - CoPaw 运行时（需单独安装 CoPaw）
+```bash
+# 删除软链接
+rm ~/.copaw/custom_channels/wecom
+
+# 或删除复制的目录
+rm -rf ~/.copaw/custom_channels/wecom
+
+# 重启 CoPaw 服务
+copaw app
+```
 
 ## 许可证
 
@@ -133,3 +155,4 @@ MIT License
 - [CoPaw 官网](https://copaw.agentscope.io/)
 - [CoPaw GitHub](https://github.com/modelscope/agentscope)
 - [企业微信开发文档](https://developer.work.weixin.qq.com/)
+- [仓库地址](https://github.com/maxuebing/copaw-wechat)
