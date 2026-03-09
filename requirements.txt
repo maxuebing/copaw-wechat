@@ -1,0 +1,10 @@
+# CoPaw 企业微信渠道插件依赖
+
+# HTTP 客户端和服务器
+aiohttp>=3.8.0
+
+# 加解密库
+pycryptodome>=3.15.0
+
+# CoPaw 运行时（需单独安装）
+# agentscope-runtime  # 通过 CoPaw 安装

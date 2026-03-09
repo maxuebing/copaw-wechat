@@ -1,9 +1,5 @@
 # CoPaw 企业微信渠道插件
 
-[![PyPI](https://img.shields.io/pypi/v/copaw-wechat)](https://pypi.org/project/copaw-wechat/)
-[![Python](https://img.shields.io/pypi/pyversions/copaw-wechat)](https://pypi.org/project/copaw-wechat/)
-[![License](https://img.shields.io/pypi/l/copaw-wechat)](https://github.com/copaw/copaw-wechat/blob/main/LICENSE)
-
 企业微信（WeCom）智能机器人渠道插件，用于 [CoPaw](https://copaw.agentscope.io/)。
 
 ## 功能特性
@@ -17,8 +13,18 @@
 
 ## 安装
 
+### 从源码安装
+
 ```bash
-pip install copaw-wechat
+# 克隆仓库
+git clone https://github.com/maxuebing/copaw-wechat.git
+cd copaw-wechat
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 安装插件（开发模式）
+pip install -e .
 ```
 
 ## 配置
@@ -95,7 +101,7 @@ copaw app
 
 ```bash
 # 克隆仓库
-git clone https://github.com/copaw/copaw-wechat.git
+git clone https://github.com/maxuebing/copaw-wechat.git
 cd copaw-wechat
 
 # 安装开发依赖
@@ -111,6 +117,12 @@ ruff check .
 # 类型检查
 mypy .
 ```
+
+## 依赖
+
+- `aiohttp` - HTTP 客户端和服务器
+- `pycryptodome` - 加解密库
+- `agentscope-runtime` - CoPaw 运行时（需单独安装 CoPaw）
 
 ## 许可证
 
