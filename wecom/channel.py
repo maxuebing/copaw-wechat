@@ -791,13 +791,17 @@ class WeComChannel(BaseChannel):
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """发送多部分内容"""
+        print(f"[DEBUG WeCom] send_content_parts 被调用: to_handle={to_handle}, parts_count={len(parts)}")
+
         meta = meta or {}
         req_id = meta.get("req_id")
 
         if not req_id:
-            req_id = await self._get_req_id(to_handle)
+            req_id = self._get_req_id_sync(to_handle)
+            print(f"[DEBUG WeCom] send_content_parts 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}")
 
         if not req_id:
+            print(f"[DEBUG WeCom] send_content_parts 没有找到 req_id: to_handle={to_handle}")
             logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
             return
 
@@ -948,6 +952,7 @@ class WeComChannel(BaseChannel):
                 "chat_type": chat_type,
                 "chat_id": chat_id,
             }
+            print(f"[DEBUG WeCom] _save_req_id 完成: key={key}, req_id={req_id}")
             logger.info(f"[WeCom] 保存 req_id: key={key}, req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
 
     async def _get_req_id(self, to_handle: str) -> Optional[str]:
