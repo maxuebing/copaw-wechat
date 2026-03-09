@@ -761,15 +761,10 @@ class WeComChannel(BaseChannel):
         self, to_handle: str, text: str, meta: Optional[Dict[str, Any]] = None
     ) -> None:
         """发送一条文本消息"""
-        meta = meta or {}
-        req_id = meta.get("req_id")
+        # 总是从存储中获取最新的 req_id
+        req_id = self._get_req_id_sync(to_handle)
 
-        print(f"[DEBUG WeCom] send 被调用: to_handle={to_handle}, text={text[:50] if text else ''}, req_id from meta={req_id}")
-
-        if not req_id:
-            # 尝试从存储中获取
-            req_id = self._get_req_id_sync(to_handle)
-            print(f"[DEBUG WeCom] 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
+        print(f"[DEBUG WeCom] send 被调用: to_handle={to_handle}, text={text[:50] if text else ''}, req_id from storage={req_id}")
 
         if not req_id:
             print(f"[DEBUG WeCom] 没有找到 req_id，无法发送: to_handle={to_handle}")
@@ -797,16 +792,12 @@ class WeComChannel(BaseChannel):
             msg = f"[DEBUG WeCom] send_content_parts START: to_handle={to_handle}, parts_count={len(parts)}"
             print(msg, flush=True)
 
-            meta = meta or {}
-            req_id = meta.get("req_id")
+            # 总是从存储中获取最新的 req_id，不使用 meta 中的
+            # 因为 meta 中的 req_id 可能是旧消息的
+            req_id = self._get_req_id_sync(to_handle)
 
-            msg = f"[DEBUG WeCom] send_content_parts: req_id from meta={req_id}"
+            msg = f"[DEBUG WeCom] send_content_parts: req_id from storage={req_id}"
             print(msg, flush=True)
-
-            if not req_id:
-                req_id = self._get_req_id_sync(to_handle)
-                msg = f"[DEBUG WeCom] send_content_parts 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}"
-                print(msg, flush=True)
 
             if not req_id:
                 msg = f"[DEBUG WeCom] send_content_parts 没有找到 req_id: to_handle={to_handle}"
