@@ -239,7 +239,7 @@ class WeComChannel(BaseChannel):
     def from_config(
         cls,
         process: ProcessHandler,
-        config: WeComConfig,
+        config: Any,
         on_reply_sent: OnReplySent = None,
         show_tool_details: bool = True,
         filter_tool_messages: bool = False,
@@ -249,7 +249,7 @@ class WeComChannel(BaseChannel):
 
         Args:
             process: 处理函数
-            config: WeComConfig 配置对象
+            config: 配置对象（可能是 Pydantic 模型、SimpleNamespace 或 dict）
             on_reply_sent: 回调函数
             show_tool_details: 是否显示工具详情
             filter_tool_messages: 是否过滤工具消息
@@ -258,29 +258,68 @@ class WeComChannel(BaseChannel):
         Returns:
             WeComChannel 实例
         """
+        # 处理不同类型的配置对象
+        if isinstance(config, dict):
+            enabled = config.get("enabled", False)
+            corp_id = config.get("corp_id", "")
+            secret = config.get("secret", "")
+            aibot_id = config.get("aibot_id", "")
+            token = config.get("token", "")
+            encoding_aes_key = config.get("encoding_aes_key", "")
+            bot_prefix = config.get("bot_prefix", "[BOT] ")
+            media_dir = config.get("media_dir", "~/.copaw/media")
+            callback_host = config.get("callback_host", WECOM_DEFAULT_HOST)
+            callback_port = config.get("callback_port", WECOM_DEFAULT_PORT)
+            callback_path = config.get("callback_path", WECOM_CALLBACK_PATH)
+            dm_policy = config.get("dm_policy", "open")
+            group_policy = config.get("group_policy", "open")
+            allow_from = config.get("allow_from")
+            deny_message = config.get("deny_message", "")
+            http_proxy = config.get("http_proxy", "")
+            http_proxy_auth = config.get("http_proxy_auth", "")
+        else:
+            # SimpleNamespace 或 Pydantic 模型
+            enabled = getattr(config, "enabled", False)
+            corp_id = getattr(config, "corp_id", "")
+            secret = getattr(config, "secret", "")
+            aibot_id = getattr(config, "aibot_id", "")
+            token = getattr(config, "token", "")
+            encoding_aes_key = getattr(config, "encoding_aes_key", "")
+            bot_prefix = getattr(config, "bot_prefix", "[BOT] ")
+            media_dir = getattr(config, "media_dir", "~/.copaw/media")
+            callback_host = getattr(config, "callback_host", WECOM_DEFAULT_HOST)
+            callback_port = getattr(config, "callback_port", WECOM_DEFAULT_PORT)
+            callback_path = getattr(config, "callback_path", WECOM_CALLBACK_PATH)
+            dm_policy = getattr(config, "dm_policy", "open")
+            group_policy = getattr(config, "group_policy", "open")
+            allow_from = getattr(config, "allow_from", None)
+            deny_message = getattr(config, "deny_message", "")
+            http_proxy = getattr(config, "http_proxy", "")
+            http_proxy_auth = getattr(config, "http_proxy_auth", "")
+
         return cls(
             process=process,
-            enabled=config.enabled,
-            corp_id=config.corp_id,
-            secret=config.secret,
-            aibot_id=config.aibot_id,
-            token=config.token,
-            encoding_aes_key=config.encoding_aes_key,
-            bot_prefix=config.bot_prefix or "[BOT] ",
-            media_dir=config.media_dir or "~/.copaw/media",
-            callback_host=config.callback_host or WECOM_DEFAULT_HOST,
-            callback_port=config.callback_port or WECOM_DEFAULT_PORT,
-            callback_path=config.callback_path or WECOM_CALLBACK_PATH,
+            enabled=enabled,
+            corp_id=corp_id,
+            secret=secret,
+            aibot_id=aibot_id,
+            token=token,
+            encoding_aes_key=encoding_aes_key,
+            bot_prefix=bot_prefix,
+            media_dir=media_dir,
+            callback_host=callback_host,
+            callback_port=callback_port,
+            callback_path=callback_path,
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
             filter_tool_messages=filter_tool_messages,
             filter_thinking=filter_thinking,
-            dm_policy=config.dm_policy or "open",
-            group_policy=config.group_policy or "open",
-            allow_from=config.allow_from,
-            deny_message=config.deny_message or "",
-            http_proxy=config.http_proxy or "",
-            http_proxy_auth=config.http_proxy_auth or "",
+            dm_policy=dm_policy,
+            group_policy=group_policy,
+            allow_from=allow_from,
+            deny_message=deny_message,
+            http_proxy=http_proxy,
+            http_proxy_auth=http_proxy_auth,
         )
 
     # ---------------------------
