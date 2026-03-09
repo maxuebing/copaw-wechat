@@ -11,6 +11,9 @@
 - 自动重连和心跳保活
 - 访问控制（白名单）
 
+<img width="1603" height="800" alt="image" src="https://github.com/user-attachments/assets/84dbd2dc-d362-4eb1-bfc9-3b17f1b1d9c2" />
+
+
 ## 安装
 
 ### 方式一：软链接安装（推荐）
@@ -171,3 +174,4 @@ MIT License
 - [CoPaw GitHub](https://github.com/modelscope/agentscope)
 - [企业微信智能机器人长连接文档](https://developer.work.weixin.qq.com/document/path/101463)
 - [仓库地址](https://github.com/maxuebing/copaw-wechat)
+
