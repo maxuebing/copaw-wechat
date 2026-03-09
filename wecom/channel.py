@@ -887,8 +887,8 @@ class WeComChannel(BaseChannel):
                 future = asyncio.run_coroutine_threadsafe(
                     self._send_json(response_msg), self._loop
                 )
-                result = future.result(timeout=5)  # 等待完成
-                print(f"[DEBUG WeCom] _send_response: 跨线程发送完成, result={result}", flush=True)
+                # 不等待结果，让发送异步完成
+                print(f"[DEBUG WeCom] _send_response: 跨线程调用已提交", flush=True)
             else:
                 print(f"[DEBUG WeCom] _send_response: 同一线程，直接发送", flush=True)
                 await self._send_json(response_msg)
@@ -910,7 +910,7 @@ class WeComChannel(BaseChannel):
         """
         import sys
         try:
-            print(f"[DEBUG WeCom] _send_json: 准备发送, data keys={list(data.keys())}", flush=True)
+            print(f"[DEBUG WeCom] _send_json: 准备发送, data={data}", flush=True)
 
             async with self._ws_lock:
                 print(f"[DEBUG WeCom] _send_json: 获取锁成功", flush=True)
