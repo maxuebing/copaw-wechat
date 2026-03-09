@@ -168,6 +168,7 @@ class WeComChannel(BaseChannel):
         self.secret = secret
         self.aibot_id = aibot_id
         self.token = token
+        self.encoding_aes_key = encoding_aes_key
         self.bot_prefix = bot_prefix
         self._media_dir = Path(media_dir).expanduser()
         self._media_dir.mkdir(parents=True, exist_ok=True)
