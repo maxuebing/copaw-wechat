@@ -15,16 +15,65 @@
 
 ### 方式一：软链接安装（推荐）
 
+#### Ubuntu/Debian 系统
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/maxuebing/copaw-wechat.git
 cd copaw-wechat
 
-# 2. 创建软链接到 CoPaw 自定义频道目录
+# 2. 安装依赖（使用 --break-system-packages 或虚拟环境）
+pip install --break-system-packages -r requirements.txt
+
+# 3. 创建软链接到 CoPaw 自定义频道目录
 ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
 
-# 3. 安装依赖
+# 4. 重启 CoPaw 服务
+copow app
+```
+
+**或者使用虚拟环境（推荐）：**
+```bash
+# 创建虚拟环境
+python3 -m venv ~/.venv/copaw-wechat
+source ~/.venv/copaw-wechat/bin/activate
+
+# 安装依赖
 pip install -r requirements.txt
+
+# 安装完成后，确保 CoPaw 能找到依赖包
+pip install --break-system-packages -r requirements.txt
+```
+
+#### macOS 系统
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/maxuebing/copaw-wechat.git
+cd copaw-wechat
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 创建软链接
+ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
+
+# 4. 重启 CoPaw 服务
+copaw app
+```
+
+#### Windows 系统
+
+```powershell
+# 1. 克隆仓库
+git clone https://github.com/maxuebing/copaw-wechat.git
+cd copaw-wechat
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 创建软链接（需要管理员权限）
+mklink /D "C:\Users\YourName\.copaw\custom_channels\wecom" "C:\path\to\copaw-wechat\wecom"
 
 # 4. 重启 CoPaw 服务
 copaw app
@@ -112,25 +161,35 @@ wecom/
 - `pycryptodome>=3.15.0` - 加解密库
 - `agentscope-runtime` - CoPaw 运行时
 
-## 开发
+## 常见问题
 
+### Ubuntu/Debian 系统 `externally-managed-environment` 错误
+
+这是 Python 3.11+ 的保护机制，有以下解决方案：
+
+**方案 1：使用 --break-system-packages（简单但不推荐）**
 ```bash
-# 克隆仓库
-git clone https://github.com/maxuebing/copaw-wechat.git
-cd copaw-wechat
+pip install --break-system-packages -r requirements.txt
+```
 
-# 安装开发依赖
-pip install -e ".[dev]"
+**方案 2：使用虚拟环境（推荐）**
+```bash
+python3 -m venv ~/.venv/copaw
+source ~/.venv/copaw/bin/activate
+pip install -r requirements.txt
+```
 
-# 运行测试
-pytest
+**方案 3：使用系统包管理器**
+```bash
+sudo apt install python3-aiohttp python3-pycryptodome
+```
 
-# 代码格式化
-black .
-ruff check .
+### 软链接创建失败
 
-# 类型检查
-mypy .
+如果 `ln -s` 命令失败，确保目标目录存在：
+```bash
+mkdir -p ~/.copaw/custom_channels
+ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
 ```
 
 ## 卸载
