@@ -534,6 +534,7 @@ class WeComChannel(BaseChannel):
             return
 
         # 保存 req_id 用于后续发送
+        print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
         await self._save_req_id(req_id, sender_id, chat_type, chat_id)
 
         # 构建原生 payload
@@ -738,7 +739,7 @@ class WeComChannel(BaseChannel):
         user_id = getattr(request, "user_id", "") or ""
         chat_id = meta.get("chat_id", "")
 
-        logger.info(f"[WeCom] get_to_handle_from_request: chat_type={chat_type}, user_id={user_id}, chat_id={chat_id}")
+        print(f"[DEBUG WeCom] get_to_handle_from_request: chat_type={chat_type}, user_id={user_id}, chat_id={chat_id}")
 
         if chat_type == WECOM_CHATTYPE_GROUP:
             return chat_id
@@ -756,14 +757,15 @@ class WeComChannel(BaseChannel):
         meta = meta or {}
         req_id = meta.get("req_id")
 
-        logger.info(f"[WeCom] send 被调用: to_handle={to_handle}, meta={meta}, req_id from meta={req_id}")
+        print(f"[DEBUG WeCom] send 被调用: to_handle={to_handle}, text={text[:50] if text else ''}, req_id from meta={req_id}")
 
         if not req_id:
             # 尝试从存储中获取
             req_id = self._get_req_id_sync(to_handle)
-            logger.info(f"[WeCom] 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
+            print(f"[DEBUG WeCom] 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
 
         if not req_id:
+            print(f"[DEBUG WeCom] 没有找到 req_id，无法发送: to_handle={to_handle}")
             logger.warning(f"[WeCom] 没有找到 req_id，无法发送: to_handle={to_handle}")
             return
 
