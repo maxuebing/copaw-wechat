@@ -436,10 +436,18 @@ class WeComChannel(BaseChannel):
                     break
 
                 msg = await self._ws.receive()
-                data = msg.json
 
-                if isinstance(data, str):
-                    data = json.loads(data)
+                # msg.json 是方法，需要调用
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                elif msg.type == aiohttp.WSMsgType.BINARY:
+                    data = json.loads(msg.data)
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f"WebSocket 错误: {msg}")
+                    break
+                else:
+                    logger.debug(f"收到非消息类型: {msg.type}")
+                    continue
 
                 await self._handle_ws_message(data)
 
