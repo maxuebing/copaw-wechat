@@ -791,61 +791,83 @@ class WeComChannel(BaseChannel):
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """发送多部分内容"""
-        print(f"[DEBUG WeCom] send_content_parts 被调用: to_handle={to_handle}, parts_count={len(parts)}")
+        import sys
 
-        meta = meta or {}
-        req_id = meta.get("req_id")
+        try:
+            msg = f"[DEBUG WeCom] send_content_parts START: to_handle={to_handle}, parts_count={len(parts)}"
+            print(msg, flush=True)
 
-        if not req_id:
-            req_id = self._get_req_id_sync(to_handle)
-            print(f"[DEBUG WeCom] send_content_parts 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}")
+            meta = meta or {}
+            req_id = meta.get("req_id")
 
-        if not req_id:
-            print(f"[DEBUG WeCom] send_content_parts 没有找到 req_id: to_handle={to_handle}")
-            logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
-            return
+            msg = f"[DEBUG WeCom] send_content_parts: req_id from meta={req_id}"
+            print(msg, flush=True)
 
-        # 解析内容部分
-        text_parts = []
-        image_parts = []
+            if not req_id:
+                req_id = self._get_req_id_sync(to_handle)
+                msg = f"[DEBUG WeCom] send_content_parts 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}"
+                print(msg, flush=True)
 
-        for part in parts:
-            p_type = getattr(part, "type", None)
+            if not req_id:
+                msg = f"[DEBUG WeCom] send_content_parts 没有找到 req_id: to_handle={to_handle}"
+                print(msg, flush=True)
+                logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
+                return
 
-            if p_type == ContentType.TEXT:
-                text_content = getattr(part, "text", "")
-                if text_content:
-                    text_parts.append(text_content)
+            # 解析内容部分
+            text_parts = []
+            image_parts = []
 
-            elif p_type == ContentType.IMAGE:
-                image_url = getattr(part, "image_url", "")
-                if image_url:
-                    image_parts.append(image_url)
+            for part in parts:
+                p_type = getattr(part, "type", None)
 
-        # 如果只有文本
-        if text_parts and not image_parts:
-            text = "".join(text_parts)
-            if self.bot_prefix:
-                text = self.bot_prefix + text
-            msg = build_text_message(text)
-            await self._send_response(req_id, msg)
-            return
+                if p_type == ContentType.TEXT:
+                    text_content = getattr(part, "text", "")
+                    if text_content:
+                        text_parts.append(text_content)
 
-        # 如果有图片，发送图文混排
-        items = []
+                elif p_type == ContentType.IMAGE:
+                    image_url = getattr(part, "image_url", "")
+                    if image_url:
+                        image_parts.append(image_url)
 
-        if text_parts:
-            text = "".join(text_parts)
-            if self.bot_prefix:
-                text = self.bot_prefix + text
-            items.append({"msgtype": "text", "text": {"content": text}})
+            msg = f"[DEBUG WeCom] send_content_parts: text_parts={len(text_parts)}, image_parts={len(image_parts)}"
+            print(msg, flush=True)
 
-        for image_url in image_parts:
-            items.append({"msgtype": "image", "image": {"url": image_url}})
+            # 如果只有文本
+            if text_parts and not image_parts:
+                text = "".join(text_parts)
+                if self.bot_prefix:
+                    text = self.bot_prefix + text
+                msg_dict = build_text_message(text)
+                msg = f"[DEBUG WeCom] send_content_parts: 即将发送文本消息, text={text[:50]}"
+                print(msg, flush=True)
+                await self._send_response(req_id, msg_dict)
+                return
 
-        if items:
-            msg = build_mixed_message(items)
-            await self._send_response(req_id, msg)
+            # 如果有图片，发送图文混排
+            items = []
+
+            if text_parts:
+                text = "".join(text_parts)
+                if self.bot_prefix:
+                    text = self.bot_prefix + text
+                items.append({"msgtype": "text", "text": {"content": text}})
+
+            for image_url in image_parts:
+                items.append({"msgtype": "image", "image": {"url": image_url}})
+
+            if items:
+                msg_dict = build_mixed_message(items)
+                msg = f"[DEBUG WeCom] send_content_parts: 即将发送混排消息"
+                print(msg, flush=True)
+                await self._send_response(req_id, msg_dict)
+
+        except Exception as e:
+            msg = f"[DEBUG WeCom] send_content_parts 异常: {e}"
+            print(msg, flush=True)
+            import traceback
+            traceback.print_exc()
 
     async def _send_response(self, req_id: str, msg: dict) -> None:
         """发送响应消息
