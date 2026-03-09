@@ -735,10 +735,15 @@ class WeComChannel(BaseChannel):
         meta = getattr(request, "channel_meta", None) or {}
         chat_type = meta.get("chat_type", WECOM_CHATTYPE_SINGLE)
 
-        if chat_type == WECOM_CHATTYPE_GROUP:
-            return meta.get("chat_id", "")
+        user_id = getattr(request, "user_id", "") or ""
+        chat_id = meta.get("chat_id", "")
 
-        return getattr(request, "user_id", "") or ""
+        logger.debug(f"get_to_handle_from_request: chat_type={chat_type}, user_id={user_id}, chat_id={chat_id}")
+
+        if chat_type == WECOM_CHATTYPE_GROUP:
+            return chat_id
+
+        return user_id
 
     # ---------------------------
     # 消息发送
@@ -751,9 +756,12 @@ class WeComChannel(BaseChannel):
         meta = meta or {}
         req_id = meta.get("req_id")
 
+        logger.debug(f"send 被调用: to_handle={to_handle}, meta={meta}, req_id from meta={req_id}")
+
         if not req_id:
             # 尝试从存储中获取
             req_id = await self._get_req_id(to_handle)
+            logger.debug(f"从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
 
         if not req_id:
             logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
@@ -898,6 +906,7 @@ class WeComChannel(BaseChannel):
                 "chat_type": chat_type,
                 "chat_id": chat_id,
             }
+            logger.debug(f"保存 req_id: key={key}, req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
 
     async def _get_req_id(self, to_handle: str) -> Optional[str]:
         """获取 req_id
