@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 import logging
 import mimetypes
@@ -129,17 +130,38 @@ class WeComChannel(BaseChannel):
         http_proxy: str = "",
         http_proxy_auth: str = "",
     ):
-        super().__init__(
-            process,
-            on_reply_sent=on_reply_sent,
-            show_tool_details=show_tool_details,
-            filter_tool_messages=filter_tool_messages,
-            filter_thinking=filter_thinking,
-            dm_policy=dm_policy,
-            group_policy=group_policy,
-            allow_from=allow_from,
-            deny_message=deny_message,
-        )
+        # 检测 BaseChannel 是否支持访问控制参数
+        base_sig = inspect.signature(BaseChannel.__init__)
+        base_params = set(base_sig.parameters.keys())
+
+        # 构建基础参数（所有版本都支持）
+        base_kwargs = {
+            "process": process,
+            "on_reply_sent": on_reply_sent,
+            "show_tool_details": show_tool_details,
+            "filter_tool_messages": filter_tool_messages,
+            "filter_thinking": filter_thinking,
+        }
+
+        # 检查是否支持访问控制参数（新版本 CoPaw）
+        self._has_base_access_control = "dm_policy" in base_params
+
+        if self._has_base_access_control:
+            # 新版本：传递访问控制参数给 BaseChannel
+            base_kwargs.update({
+                "dm_policy": dm_policy,
+                "group_policy": group_policy,
+                "allow_from": allow_from,
+                "deny_message": deny_message,
+            })
+        else:
+            # 旧版本：自己存储访问控制配置
+            self._dm_policy = dm_policy
+            self._group_policy = group_policy
+            self._allow_from = set(allow_from or [])
+            self._deny_message = deny_message
+
+        super().__init__(**base_kwargs)
 
         self.enabled = enabled
         self.corp_id = corp_id
@@ -632,6 +654,55 @@ class WeComChannel(BaseChannel):
             "content_parts": content_parts,
             "meta": meta,
         }
+
+    # ---------------------------
+    # 访问控制
+    # ---------------------------
+
+    def _check_allowlist(self, sender_id: str, is_group: bool) -> tuple[bool, str]:
+        """检查发送者是否在白名单中
+
+        兼容新旧版本 CoPaw：
+        - 新版本：使用 BaseChannel 的访问控制
+        - 旧版本：使用自己存储的访问控制配置
+
+        Args:
+            sender_id: 发送者 ID
+            is_group: 是否是群聊
+
+        Returns:
+            (是否允许, 拒绝消息)
+        """
+        if self._has_base_access_control:
+            # 新版本：使用 BaseChannel 的方法
+            # 检查 BaseChannel 是否有 _check_allowlist 方法
+            if hasattr(super(), "_check_allowlist"):
+                return super()._check_allowlist(sender_id, is_group)
+            # 如果没有方法，使用属性检查
+            policy = self.group_policy if is_group else self.dm_policy
+            allow_list = set(self.allow_from or [])
+            deny_msg = self.deny_message or ""
+        else:
+            # 旧版本：使用自己存储的配置
+            policy = self._group_policy if is_group else self._dm_policy
+            allow_list = self._allow_from
+            deny_msg = self._deny_message
+
+        # open 模式：允许所有人
+        if policy == "open":
+            return True, ""
+
+        # whitelist 模式：检查白名单
+        if policy == "whitelist":
+            if not allow_list:
+                # 没有配置白名单，默认允许
+                return True, ""
+            if sender_id in allow_list:
+                return True, ""
+            return False, deny_msg
+
+        # 未知策略，默认允许
+        return True, ""
 
     # ---------------------------
     # 消息构建（BaseChannel 接口）
