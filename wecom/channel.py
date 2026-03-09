@@ -1,28 +1,24 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-statements,too-many-branches,unused-argument
-"""企业微信频道
+# pylint: disable=too-many-statements,too-many-branches,too-many-lines,unused-argument
+"""企业微信频道 - WebSocket 长连接模式
 
-实现企业微信智能机器人的消息收发功能。
+实现企业微信智能机器人的消息收发功能，使用 WebSocket 长连接方式。
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
 import json
 import logging
-import mimetypes
 import os
 import threading
-from pathlib import Path
+import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
-from aiohttp import web
 
 # 导入 CoPaw 相关模块
-# 注意：本插件需要 CoPaw 运行时环境才能正常工作
 try:
     from copaw.app.channels.base import (
         BaseChannel,
@@ -34,13 +30,10 @@ try:
         ContentType,
         ImageContent,
         TextContent,
-        VideoContent,
-        AudioContent,
         FileContent,
     )
     _COPAW_AVAILABLE = True
 except ImportError:
-    # 当 CoPaw 未安装时，提供占位符以支持类型检查
     BaseChannel = object  # type: ignore
     OnReplySent = None  # type: ignore
     OutgoingContentPart = None  # type: ignore
@@ -48,41 +41,18 @@ except ImportError:
     ContentType = None  # type: ignore
     ImageContent = None  # type: ignore
     TextContent = None  # type: ignore
-    VideoContent = None  # type: ignore
-    AudioContent = None  # type: ignore
     FileContent = None  # type: ignore
     _COPAW_AVAILABLE = False
+
 from .constants import (
-    WECOM_CALLBACK_PATH,
     WECOM_CHATTYPE_GROUP,
     WECOM_CHATTYPE_SINGLE,
-    WECOM_DEFAULT_HOST,
-    WECOM_DEFAULT_PORT,
     WECOM_MSGTYPE_FILE,
     WECOM_MSGTYPE_IMAGE,
     WECOM_MSGTYPE_MARKDOWN,
     WECOM_MSGTYPE_MIXED,
-    WECOM_MSGTYPE_STREAM,
     WECOM_MSGTYPE_TEXT,
     WECOM_MSGTYPE_VOICE,
-    WECOM_STREAM_STATUS_CONTINUE,
-    WECOM_STREAM_STATUS_END,
-)
-from .crypto import WeComCrypto, WeComCryptoError
-from .utils import (
-    TokenManager,
-    build_image_message,
-    build_markdown_message,
-    build_mixed_message,
-    build_stream_message,
-    build_text_message,
-    calculate_md5,
-    download_file,
-    extract_text_from_mixed,
-    get_file_mime_type,
-    is_group_chat,
-    normalize_markdown,
-    sender_display_string,
 )
 
 if TYPE_CHECKING:
@@ -90,17 +60,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# WebSocket 常量
+WSS_URL = "wss://openws.work.weixin.qq.com"
+HEARTBEAT_INTERVAL = 30  # 心跳间隔（秒）
+RECONNECT_DELAY = 5  # 重连延迟（秒）
+MAX_RECONNECT_DELAY = 60  # 最大重连延迟（秒）
+
 
 class WeComChannel(BaseChannel):
-    """企业微信频道
+    """企业微信频道 - WebSocket 长连接模式
 
-    通过 HTTP 回调接收企业微信智能机器人推送的消息，
-    并通过 response_url 发送回复。
+    通过 WebSocket 长连接接收企业微信智能机器人的消息，
+    并通过同一连接发送回复。
 
     配置方式：
-    1. 在企业微信管理后台配置智能机器人回调 URL
-    2. 回调 URL 格式：http(s)://your-server:port/wecom/callback
-    3. 配置 Token 和 EncodingAESKey
+    1. 在企业微信管理后台开启「长连接 API 模式」
+    2. 获取 BotID 和 Secret（长连接专用）
+    3. 无需配置回调 URL 和加解密密钥
     """
 
     channel = "wecom"
@@ -109,16 +85,9 @@ class WeComChannel(BaseChannel):
         self,
         process: ProcessHandler,
         enabled: bool,
-        corp_id: str,
+        bot_id: str,
         secret: str,
-        aibot_id: str,
-        token: str,
-        encoding_aes_key: str,
         bot_prefix: str = "[BOT] ",
-        media_dir: str = "~/.copaw/media",
-        callback_host: str = WECOM_DEFAULT_HOST,
-        callback_port: int = WECOM_DEFAULT_PORT,
-        callback_path: str = WECOM_CALLBACK_PATH,
         on_reply_sent: OnReplySent = None,
         show_tool_details: bool = True,
         filter_tool_messages: bool = False,
@@ -164,51 +133,45 @@ class WeComChannel(BaseChannel):
         super().__init__(**base_kwargs)
 
         self.enabled = enabled
-        self.corp_id = corp_id
+        self.bot_id = bot_id
         self.secret = secret
-        self.aibot_id = aibot_id
-        self.token = token
-        self.encoding_aes_key = encoding_aes_key
         self.bot_prefix = bot_prefix
-        self._media_dir = Path(media_dir).expanduser()
-        self._media_dir.mkdir(parents=True, exist_ok=True)
-
-        # 回调服务器配置
-        self._callback_host = callback_host
-        self._callback_port = callback_port
-        self._callback_path = callback_path
 
         # 代理配置
         self._http_proxy = http_proxy
         self._http_proxy_auth = http_proxy_auth
 
-        # 加解密器
-        self._crypto: Optional[WeComCrypto] = None
+        # WebSocket 连接
+        self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._ws_session: Optional[aiohttp.ClientSession] = None
+        self._ws_lock = asyncio.Lock()
 
-        # Token 管理器
-        self._token_manager: Optional[TokenManager] = None
-
-        # HTTP 客户端
-        self._http: Optional[aiohttp.ClientSession] = None
-
-        # HTTP 回调服务器
-        self._app: Optional[web.Application] = None
-        self._runner: Optional[web.AppRunner] = None
-        self._site: Optional[web.TCPSite] = None
+        # 事件循环和线程
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._server_thread: Optional[threading.Thread] = None
+        self._ws_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+
+        # 心跳任务
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # 消息去重缓存
         self._processed_message_ids: set = set()
         self._processed_lock = threading.Lock()
 
-        # Session webhook 存储（用于主动发送）
-        self._response_url_store: Dict[str, str] = {}
-        self._response_url_lock = asyncio.Lock()
+        # req_id 存储（用于回复消息关联）
+        self._req_id_store: Dict[str, Dict] = {}
+        self._req_id_lock = asyncio.Lock()
 
-        # 时间去抖动（企业微信通常不需要）
+        # 时间去抖动
         self._debounce_seconds = 0.0
+
+        # 连接状态
+        self._is_connected = False
+        self._is_connecting = False
+
+        # 重连相关
+        self._reconnect_delay = RECONNECT_DELAY
+        self._should_reconnect = True
 
     @classmethod
     def from_env(
@@ -220,15 +183,9 @@ class WeComChannel(BaseChannel):
 
         环境变量：
         - WECOM_CHANNEL_ENABLED: 是否启用
-        - WECOM_CORP_ID: 企业 ID
-        - WECOM_SECRET: 应用 Secret
-        - WECOM_AIBOT_ID: 智能机器人 ID
-        - WECOM_TOKEN: 回调验证 Token
-        - WECOM_ENCODING_AES_KEY: 加解密 Key
+        - WECOM_BOT_ID: 智能机器人 BotID
+        - WECOM_SECRET: 长连接专用密钥
         - WECOM_BOT_PREFIX: 机器人前缀
-        - WECOM_MEDIA_DIR: 媒体文件目录
-        - WECOM_CALLBACK_HOST: 回调服务器地址
-        - WECOM_CALLBACK_PORT: 回调服务器端口
         """
         allow_from_env = os.getenv("WECOM_ALLOW_FROM", "")
         allow_from = (
@@ -240,15 +197,9 @@ class WeComChannel(BaseChannel):
         return cls(
             process=process,
             enabled=os.getenv("WECOM_CHANNEL_ENABLED", "1") == "1",
-            corp_id=os.getenv("WECOM_CORP_ID", ""),
+            bot_id=os.getenv("WECOM_BOT_ID", ""),
             secret=os.getenv("WECOM_SECRET", ""),
-            aibot_id=os.getenv("WECOM_AIBOT_ID", ""),
-            token=os.getenv("WECOM_TOKEN", ""),
-            encoding_aes_key=os.getenv("WECOM_ENCODING_AES_KEY", ""),
             bot_prefix=os.getenv("WECOM_BOT_PREFIX", "[BOT] "),
-            media_dir=os.getenv("WECOM_MEDIA_DIR", "~/.copaw/media"),
-            callback_host=os.getenv("WECOM_CALLBACK_HOST", WECOM_DEFAULT_HOST),
-            callback_port=int(os.getenv("WECOM_CALLBACK_PORT", str(WECOM_DEFAULT_PORT))),
             on_reply_sent=on_reply_sent,
             dm_policy=os.getenv("WECOM_DM_POLICY", "open"),
             group_policy=os.getenv("WECOM_GROUP_POLICY", "open"),
@@ -284,16 +235,9 @@ class WeComChannel(BaseChannel):
         # 处理不同类型的配置对象
         if isinstance(config, dict):
             enabled = config.get("enabled", False)
-            corp_id = config.get("corp_id", "")
+            bot_id = config.get("bot_id", "")
             secret = config.get("secret", "")
-            aibot_id = config.get("aibot_id", "")
-            token = config.get("token", "")
-            encoding_aes_key = config.get("encoding_aes_key", "")
             bot_prefix = config.get("bot_prefix", "[BOT] ")
-            media_dir = config.get("media_dir", "~/.copaw/media")
-            callback_host = config.get("callback_host", WECOM_DEFAULT_HOST)
-            callback_port = config.get("callback_port", WECOM_DEFAULT_PORT)
-            callback_path = config.get("callback_path", WECOM_CALLBACK_PATH)
             dm_policy = config.get("dm_policy", "open")
             group_policy = config.get("group_policy", "open")
             allow_from = config.get("allow_from")
@@ -303,16 +247,9 @@ class WeComChannel(BaseChannel):
         else:
             # SimpleNamespace 或 Pydantic 模型
             enabled = getattr(config, "enabled", False)
-            corp_id = getattr(config, "corp_id", "")
+            bot_id = getattr(config, "bot_id", "")
             secret = getattr(config, "secret", "")
-            aibot_id = getattr(config, "aibot_id", "")
-            token = getattr(config, "token", "")
-            encoding_aes_key = getattr(config, "encoding_aes_key", "")
             bot_prefix = getattr(config, "bot_prefix", "[BOT] ")
-            media_dir = getattr(config, "media_dir", "~/.copaw/media")
-            callback_host = getattr(config, "callback_host", WECOM_DEFAULT_HOST)
-            callback_port = getattr(config, "callback_port", WECOM_DEFAULT_PORT)
-            callback_path = getattr(config, "callback_path", WECOM_CALLBACK_PATH)
             dm_policy = getattr(config, "dm_policy", "open")
             group_policy = getattr(config, "group_policy", "open")
             allow_from = getattr(config, "allow_from", None)
@@ -323,16 +260,9 @@ class WeComChannel(BaseChannel):
         return cls(
             process=process,
             enabled=enabled,
-            corp_id=corp_id,
+            bot_id=bot_id,
             secret=secret,
-            aibot_id=aibot_id,
-            token=token,
-            encoding_aes_key=encoding_aes_key,
             bot_prefix=bot_prefix,
-            media_dir=media_dir,
-            callback_host=callback_host,
-            callback_port=callback_port,
-            callback_path=callback_path,
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
             filter_tool_messages=filter_tool_messages,
@@ -352,164 +282,221 @@ class WeComChannel(BaseChannel):
     async def start(self) -> None:
         """启动频道
 
-        1. 初始化加解密器
-        2. 启动 HTTP 回调服务器
-        3. 初始化 HTTP 客户端
+        1. 创建事件循环
+        2. 建立 WebSocket 连接
+        3. 发送订阅请求
+        4. 启动心跳任务
+        5. 启动消息接收循环
         """
-        logger.info("启动企业微信频道...")
+        logger.info("启动企业微信频道（长连接模式）...")
 
-        # 初始化加解密器
-        self._crypto = WeComCrypto(self.encoding_aes_key)
+        self._stop_event.clear()
+        self._should_reconnect = True
 
-        # 初始化 Token 管理器
-        self._token_manager = TokenManager(self.corp_id, self.secret)
+        # 创建新的事件循环
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
 
-        # 初始化 HTTP 客户端
-        connector = aiohttp.TCPConnector(limit=100)
-        timeout = aiohttp.ClientTimeout(total=30)
-
-        self._http = aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout,
+        # 在新线程中运行 WebSocket
+        self._ws_thread = threading.Thread(
+            target=self._run_ws_loop, daemon=True, name="WeComWebSocket"
         )
+        self._ws_thread.start()
 
-        # 启动 HTTP 回调服务器
-        await self._start_callback_server()
-
-        logger.info(
-            f"企业微信频道已启动: callback=http://{self._callback_host}:{self._callback_port}{self._callback_path}"
-        )
+        logger.info("企业微信频道已启动（长连接模式）")
 
     async def stop(self) -> None:
         """停止频道
 
-        1. 停止 HTTP 回调服务器
-        2. 关闭 HTTP 客户端
+        1. 停止重连
+        2. 关闭 WebSocket 连接
+        3. 取消心跳任务
+        4. 关闭事件循环
         """
         logger.info("停止企业微信频道...")
 
-        # 停止 HTTP 回调服务器
-        await self._stop_callback_server()
+        self._should_reconnect = False
+        self._stop_event.set()
 
-        # 关闭 HTTP 客户端
-        if self._http:
-            await self._http.close()
-            self._http = None
+        # 在事件循环中执行关闭
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._close_ws(), self._loop)
+
+        # 等待线程结束
+        if self._ws_thread and self._ws_thread.is_alive():
+            self._ws_thread.join(timeout=5)
 
         logger.info("企业微信频道已停止")
 
-    async def _start_callback_server(self) -> None:
-        """启动 HTTP 回调服务器"""
-        self._loop = asyncio.get_event_loop()
+    def _run_ws_loop(self) -> None:
+        """在新线程中运行 WebSocket 事件循环"""
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._ws_main())
 
-        # 创建 aiohttp 应用
-        self._app = web.Application()
-        self._app.router.add_post(self._callback_path, self._handle_callback)
+    async def _ws_main(self) -> None:
+        """WebSocket 主循环"""
+        while not self._stop_event.is_set():
+            try:
+                await self._connect_and_subscribe()
+                await self._receive_loop()
+            except Exception as e:
+                logger.error(f"WebSocket 连接异常: {e}")
+                if self._stop_event.is_set():
+                    break
 
-        # 创建 runner
-        self._runner = web.AppRunner(self._app)
-        await self._runner.setup()
+                # 指数退避重连
+                await asyncio.sleep(self._reconnect_delay)
+                self._reconnect_delay = min(
+                    self._reconnect_delay * 2, MAX_RECONNECT_DELAY
+                )
 
-        # 创建 site
-        self._site = web.TCPSite(
-            self._runner,
-            self._callback_host,
-            self._callback_port,
-        )
-        await self._site.start()
+    async def _connect_and_subscribe(self) -> None:
+        """建立 WebSocket 连接并发送订阅请求"""
+        async with self._ws_lock:
+            if self._is_connecting:
+                return
 
-        logger.debug(
-            f"HTTP 回调服务器已启动: {self._callback_host}:{self._callback_port}"
-        )
+            self._is_connecting = True
+            self._is_connected = False
 
-    async def _stop_callback_server(self) -> None:
-        """停止 HTTP 回调服务器"""
-        if self._site:
-            await self._site.stop()
-            self._site = None
-
-        if self._runner:
-            await self._runner.cleanup()
-            self._runner = None
-
-        self._app = None
-
-    # ---------------------------
-    # 回调处理
-    # ---------------------------
-
-    async def _handle_callback(self, request: web.Request) -> web.Response:
-        """处理企业微信回调
-
-        Args:
-            request: aiohttp 请求对象
-
-        Returns:
-            aiohttp 响应对象
-        """
         try:
-            # 解析请求参数
-            msg_signature = request.query.get("msg_signature", "")
-            timestamp = request.query.get("timestamp", "")
-            nonce = request.query.get("nonce", "")
+            # 配置代理
+            connector = aiohttp.TCPConnector(limit=100)
+            timeout = aiohttp.ClientTimeout(total=30)
 
-            # 读取请求体
-            body = await request.read()
+            headers = {}
+            proxy = None
+            if self._http_proxy:
+                proxy = self._http_proxy
+                if self._http_proxy_auth:
+                    headers["Proxy-Authorization"] = self._http_proxy_auth
 
-            if not body:
-                logger.warning("收到空的回调请求")
-                return web.Response(text="empty", status=400)
+            # 创建 HTTP Session
+            self._ws_session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers=headers,
+            )
 
-            data = json.loads(body.decode("utf-8"))
-            encrypt = data.get("encrypt", "")
+            # 建立 WebSocket 连接
+            logger.info(f"正在连接企业微信 WebSocket: {WSS_URL}")
+            self._ws = await self._ws_session.ws_connect(
+                WSS_URL, proxy=proxy, heartbeat=HEARTBEAT_INTERVAL
+            )
+            self._is_connected = True
+            self._reconnect_delay = RECONNECT_DELAY  # 重置重连延迟
 
-            if not encrypt:
-                logger.warning("回调请求缺少 encrypt 字段")
-                return web.Response(text="missing encrypt", status=400)
+            logger.info("WebSocket 连接成功，正在订阅机器人...")
 
-            # 验证签名
-            if not self._crypto.verify_signature(msg_signature, timestamp, nonce, encrypt):
-                logger.warning("回调签名验证失败")
-                return web.Response(text="invalid signature", status=403)
+            # 发送订阅请求
+            await self._subscribe()
 
-            # 解密消息
-            msg, corp_id = self._crypto.decrypt(encrypt)
+            # 启动心跳任务
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
-            if corp_id != self.corp_id:
-                logger.warning(f"企业 ID 不匹配: expected={self.corp_id}, got={corp_id}")
-                return web.Response(text="invalid corp_id", status=403)
+            logger.info(f"企业微信机器人订阅成功: bot_id={self.bot_id}")
 
-            # 解析消息
-            msg_data = json.loads(msg)
-
-            # 处理消息
-            await self._process_message(msg_data)
-
-            # 返回成功响应
-            return web.Response(text="success")
-
-        except WeComCryptoError as e:
-            logger.error(f"加解密异常: {e}")
-            return web.Response(text="crypto error", status=500)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON 解析失败: {e}")
-            return web.Response(text="invalid json", status=400)
         except Exception as e:
-            logger.exception(f"处理回调异常: {e}")
-            return web.Response(text="internal error", status=500)
+            logger.error(f"WebSocket 连接失败: {e}")
+            self._is_connected = False
+            if self._ws_session:
+                await self._ws_session.close()
+                self._ws_session = None
+            raise
+        finally:
+            self._is_connecting = False
 
-    async def _process_message(self, msg_data: dict) -> None:
-        """处理接收到的消息
+    async def _subscribe(self) -> None:
+        """发送订阅请求"""
+        req_id = str(uuid.uuid4())
+
+        subscribe_msg = {
+            "cmd": "aibot_subscribe",
+            "headers": {"req_id": req_id},
+            "body": {"bot_id": self.bot_id, "secret": self.secret},
+        }
+
+        await self._send_json(subscribe_msg)
+
+        # 等待订阅响应
+        response = await self._ws.receive()
+        response_data = response.json()
+
+        if response_data.get("errcode") != 0:
+            raise Exception(f"订阅失败: {response_data}")
+
+    async def _receive_loop(self) -> None:
+        """消息接收循环"""
+        logger.info("开始接收消息...")
+
+        while not self._stop_event.is_set():
+            try:
+                if self._ws is None or self._ws.closed:
+                    logger.warning("WebSocket 连接已关闭")
+                    break
+
+                msg = await self._ws.receive()
+                data = msg.json
+
+                if isinstance(data, str):
+                    data = json.loads(data)
+
+                await self._handle_ws_message(data)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"接收消息异常: {e}")
+                if not self._is_connected:
+                    break
+
+    async def _handle_ws_message(self, data: dict) -> None:
+        """处理 WebSocket 消息
 
         Args:
-            msg_data: 消息数据
+            data: 消息数据
         """
-        # 去重
-        msg_id = msg_data.get("msgid", "")
-        if not msg_id:
-            logger.warning("消息缺少 msgid 字段")
-            return
+        cmd = data.get("cmd", "")
+        headers = data.get("headers", {})
+        body = data.get("body", {})
+        req_id = headers.get("req_id", "")
 
+        # 处理不同类型的消息
+        if cmd == "aibot_msg_callback":
+            # 消息回调
+            await self._process_message_callback(data)
+
+        elif cmd == "aibot_event_callback":
+            # 事件回调
+            await self._process_event_callback(data)
+
+        elif cmd == "ping":
+            # 心跳响应
+            logger.debug("收到心跳响应")
+
+        else:
+            logger.debug(f"未知命令类型: {cmd}")
+
+    async def _process_message_callback(self, data: dict) -> None:
+        """处理消息回调
+
+        Args:
+            data: 消息数据
+        """
+        headers = data.get("headers", {})
+        body = data.get("body", {})
+        req_id = headers.get("req_id", "")
+
+        # 提取消息字段
+        msg_id = body.get("msgid", "")
+        aibot_id = body.get("aibotid", "")
+        chat_id = body.get("chatid", "")
+        chat_type = body.get("chattype", WECOM_CHATTYPE_SINGLE)
+        from_user = body.get("from", {})
+        sender_id = from_user.get("userid", "")
+        msg_type = body.get("msgtype", "")
+
+        # 去重
         with self._processed_lock:
             if msg_id in self._processed_message_ids:
                 logger.debug(f"重复消息，跳过: msg_id={msg_id[:24]}...")
@@ -519,23 +506,13 @@ class WeComChannel(BaseChannel):
 
             # 限制缓存大小
             if len(self._processed_message_ids) > 10000:
-                # 清除一半
                 old_ids = list(self._processed_message_ids)[:5000]
                 self._processed_message_ids.difference_update(old_ids)
 
-        # 提取消息字段
-        aibot_id = msg_data.get("aibotid", "")
-        chat_id = msg_data.get("chatid", "")
-        chat_type = msg_data.get("chattype", WECOM_CHATTYPE_SINGLE)
-        from_user = msg_data.get("from", {})
-        sender_id = from_user.get("userid", "")
-        response_url = msg_data.get("response_url", "")
-        msg_type = msg_data.get("msgtype", "")
-
         # 验证机器人 ID
-        if aibot_id != self.aibot_id:
+        if aibot_id != self.bot_id:
             logger.debug(
-                f"机器人 ID 不匹配，跳过: expected={self.aibot_id}, got={aibot_id}"
+                f"机器人 ID 不匹配，跳过: expected={self.bot_id}, got={aibot_id}"
             )
             return
 
@@ -545,15 +522,15 @@ class WeComChannel(BaseChannel):
 
         if not allowed and deny_msg:
             # 发送拒绝消息
-            await self._send_response(response_url, build_text_message(deny_msg))
+            await self._send_response(req_id, build_text_message(deny_msg))
             return
 
-        # 保存 response_url 用于后续发送
-        await self._save_response_url(sender_id, response_url, chat_type, chat_id)
+        # 保存 req_id 用于后续发送
+        await self._save_req_id(req_id, sender_id, chat_type, chat_id)
 
         # 构建原生 payload
         native_payload = await self._build_native_payload(
-            msg_data, sender_id, chat_type, chat_id, response_url
+            body, sender_id, chat_type, chat_id, req_id
         )
 
         # 入队处理
@@ -562,13 +539,37 @@ class WeComChannel(BaseChannel):
         else:
             logger.warning("enqueue callback not set")
 
+    async def _process_event_callback(self, data: dict) -> None:
+        """处理事件回调
+
+        Args:
+            data: 事件数据
+        """
+        headers = data.get("headers", {})
+        body = data.get("body", {})
+        event = body.get("event", {})
+        event_type = event.get("eventtype", "")
+
+        if event_type == "enter_chat":
+            # 进入会话事件 - 可以发送欢迎语
+            logger.info("用户进入会话")
+            # TODO: 实现欢迎语
+
+        elif event_type == "disconnected_event":
+            # 连接断开事件
+            logger.warning("收到连接断开事件，准备重连...")
+            self._is_connected = False
+
+        else:
+            logger.debug(f"未处理的事件类型: {event_type}")
+
     async def _build_native_payload(
         self,
         msg_data: dict,
         sender_id: str,
         chat_type: str,
         chat_id: str,
-        response_url: str,
+        req_id: str,
     ) -> dict:
         """构建原生 payload
 
@@ -577,7 +578,7 @@ class WeComChannel(BaseChannel):
             sender_id: 发送者 ID
             chat_type: 会话类型
             chat_id: 会话 ID
-            response_url: 回复 URL
+            req_id: 请求 ID
 
         Returns:
             原生 payload
@@ -597,7 +598,7 @@ class WeComChannel(BaseChannel):
                     ImageContent(type=ContentType.IMAGE, image_url=image_url)
                 )
 
-        elif msg_type == WECOM_MSGTYPE_MIXED:
+        elif msg_type == "mixed":
             mixed = msg_data.get("mixed", {})
             text = extract_text_from_mixed(mixed)
 
@@ -625,17 +626,6 @@ class WeComChannel(BaseChannel):
                     FileContent(type=ContentType.FILE, file_url=file_url)
                 )
 
-        # 处理引用
-        quote = msg_data.get("quote")
-        if quote:
-            quote_type = quote.get("msgtype", "")
-            if quote_type == "text":
-                quote_text = quote.get("text", {}).get("content", "")
-                if quote_text:
-                    content_parts.insert(
-                        0, TextContent(type=ContentType.TEXT, text=f"> {quote_text}")
-                    )
-
         # 如果没有内容，添加空文本
         if not content_parts:
             content_parts.append(TextContent(type=ContentType.TEXT, text=""))
@@ -644,7 +634,7 @@ class WeComChannel(BaseChannel):
         meta = {
             "chat_type": chat_type,
             "chat_id": chat_id,
-            "response_url": response_url,
+            "req_id": req_id,
             "msgid": msg_data.get("msgid", ""),
             "aibot_id": msg_data.get("aibotid", ""),
         }
@@ -661,22 +651,9 @@ class WeComChannel(BaseChannel):
     # ---------------------------
 
     def _check_allowlist(self, sender_id: str, is_group: bool) -> tuple[bool, str]:
-        """检查发送者是否在白名单中
-
-        兼容新旧版本 CoPaw：
-        - 新版本：使用 BaseChannel 的访问控制
-        - 旧版本：使用自己存储的访问控制配置
-
-        Args:
-            sender_id: 发送者 ID
-            is_group: 是否是群聊
-
-        Returns:
-            (是否允许, 拒绝消息)
-        """
+        """检查发送者是否在白名单中"""
         if self._has_base_access_control:
             # 新版本：使用 BaseChannel 的方法
-            # 检查 BaseChannel 是否有 _check_allowlist 方法
             if hasattr(super(), "_check_allowlist"):
                 return super()._check_allowlist(sender_id, is_group)
             # 如果没有方法，使用属性检查
@@ -696,13 +673,11 @@ class WeComChannel(BaseChannel):
         # whitelist 模式：检查白名单
         if policy == "whitelist":
             if not allow_list:
-                # 没有配置白名单，默认允许
                 return True, ""
             if sender_id in allow_list:
                 return True, ""
             return False, deny_msg
 
-        # 未知策略，默认允许
         return True, ""
 
     # ---------------------------
@@ -712,14 +687,7 @@ class WeComChannel(BaseChannel):
     def build_agent_request_from_native(
         self, native_payload: Any
     ) -> "AgentRequest":
-        """将渠道原生消息转为 AgentRequest
-
-        Args:
-            native_payload: 原生 payload（dict）
-
-        Returns:
-            AgentRequest 实例
-        """
+        """将渠道原生消息转为 AgentRequest"""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
@@ -744,17 +712,7 @@ class WeComChannel(BaseChannel):
     def resolve_session_id(
         self, sender_id: str, channel_meta: Optional[Dict[str, Any]] = None
     ) -> str:
-        """解析会话 ID
-
-        对于群聊，使用 chat_id；对于单聊，使用 sender_id
-
-        Args:
-            sender_id: 发送者 ID
-            channel_meta: 频道元数据
-
-        Returns:
-            会话 ID
-        """
+        """解析会话 ID"""
         meta = channel_meta or {}
         chat_type = meta.get("chat_type", WECOM_CHATTYPE_SINGLE)
 
@@ -765,22 +723,13 @@ class WeComChannel(BaseChannel):
         return f"{self.channel}:{sender_id}"
 
     def get_to_handle_from_request(self, request: "AgentRequest") -> str:
-        """从 AgentRequest 解析发送目标
-
-        Args:
-            request: AgentRequest 实例
-
-        Returns:
-            发送目标（sender_id 或 chat_id）
-        """
+        """从 AgentRequest 解析发送目标"""
         meta = getattr(request, "channel_meta", None) or {}
         chat_type = meta.get("chat_type", WECOM_CHATTYPE_SINGLE)
 
         if chat_type == WECOM_CHATTYPE_GROUP:
-            # 群聊使用 chat_id
             return meta.get("chat_id", "")
 
-        # 单聊使用 user_id
         return getattr(request, "user_id", "") or ""
 
     # ---------------------------
@@ -790,22 +739,16 @@ class WeComChannel(BaseChannel):
     async def send(
         self, to_handle: str, text: str, meta: Optional[Dict[str, Any]] = None
     ) -> None:
-        """发送一条文本消息
-
-        Args:
-            to_handle: 发送目标
-            text: 文本内容
-            meta: 元数据（包含 response_url）
-        """
+        """发送一条文本消息"""
         meta = meta or {}
-        response_url = meta.get("response_url")
+        req_id = meta.get("req_id")
 
-        if not response_url:
+        if not req_id:
             # 尝试从存储中获取
-            response_url = await self._get_response_url(to_handle)
+            req_id = await self._get_req_id(to_handle)
 
-        if not response_url:
-            logger.warning(f"没有找到 response_url，无法发送: to_handle={to_handle}")
+        if not req_id:
+            logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
             return
 
         # 添加机器人前缀
@@ -814,7 +757,7 @@ class WeComChannel(BaseChannel):
 
         # 发送文本消息
         msg = build_text_message(text)
-        await self._send_response(response_url, msg)
+        await self._send_response(req_id, msg)
 
     async def send_content_parts(
         self,
@@ -822,27 +765,20 @@ class WeComChannel(BaseChannel):
         parts: List[OutgoingContentPart],
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """发送多部分内容
-
-        Args:
-            to_handle: 发送目标
-            parts: 内容部分列表
-            meta: 元数据
-        """
+        """发送多部分内容"""
         meta = meta or {}
-        response_url = meta.get("response_url")
+        req_id = meta.get("req_id")
 
-        if not response_url:
-            response_url = await self._get_response_url(to_handle)
+        if not req_id:
+            req_id = await self._get_req_id(to_handle)
 
-        if not response_url:
-            logger.warning(f"没有找到 response_url，无法发送: to_handle={to_handle}")
+        if not req_id:
+            logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
             return
 
         # 解析内容部分
         text_parts = []
         image_parts = []
-        file_parts = []
 
         for part in parts:
             p_type = getattr(part, "type", None)
@@ -857,103 +793,185 @@ class WeComChannel(BaseChannel):
                 if image_url:
                     image_parts.append(image_url)
 
-            elif p_type == ContentType.FILE:
-                file_url = getattr(part, "file_url", "")
-                if file_url:
-                    file_parts.append(file_url)
-
-        # 如果只有文本，发送文本消息
-        if text_parts and not image_parts and not file_parts:
+        # 如果只有文本
+        if text_parts and not image_parts:
             text = "".join(text_parts)
-
-            # 添加机器人前缀
             if self.bot_prefix:
                 text = self.bot_prefix + text
-
             msg = build_text_message(text)
-            await self._send_response(response_url, msg)
+            await self._send_response(req_id, msg)
             return
 
-        # 如果有图片或文件，发送图文混排消息
+        # 如果有图片，发送图文混排
         items = []
 
-        # 添加文本
         if text_parts:
             text = "".join(text_parts)
             if self.bot_prefix:
                 text = self.bot_prefix + text
             items.append({"msgtype": "text", "text": {"content": text}})
 
-        # 添加图片
         for image_url in image_parts:
             items.append({"msgtype": "image", "image": {"url": image_url}})
 
-        # 添加文件
-        for file_url in file_parts:
-            items.append({"msgtype": "file", "file": {"url": file_url}})
-
         if items:
             msg = build_mixed_message(items)
-            await self._send_response(response_url, msg)
+            await self._send_response(req_id, msg)
 
-    async def _send_response(self, response_url: str, msg: dict) -> None:
+    async def _send_response(self, req_id: str, msg: dict) -> None:
         """发送响应消息
 
         Args:
-            response_url: 回复 URL
+            req_id: 关联的请求 ID
             msg: 消息体
         """
         try:
-            headers = {"Content-Type": "application/json"}
+            response_msg = {
+                "cmd": "aibot_respond_msg",
+                "headers": {"req_id": req_id},
+                "body": msg,
+            }
 
-            async with self._http.post(response_url, json=msg, headers=headers) as resp:
-                data = await resp.json()
-
-                if data.get("errcode", 0) != 0:
-                    logger.error(f"发送消息失败: {data}")
-                else:
-                    logger.debug(f"发送消息成功: msgtype={msg.get('msgtype')}")
+            await self._send_json(response_msg)
+            logger.debug(f"发送消息成功: msgtype={msg.get('msgtype')}")
 
         except Exception as e:
             logger.error(f"发送消息异常: {e}")
 
-    # ---------------------------
-    # Response URL 存储
-    # ---------------------------
-
-    async def _save_response_url(
-        self, sender_id: str, response_url: str, chat_type: str, chat_id: str
-    ) -> None:
-        """保存 response_url
+    async def _send_json(self, data: dict) -> None:
+        """发送 JSON 数据
 
         Args:
+            data: 要发送的数据
+        """
+        async with self._ws_lock:
+            if self._ws is None or self._ws.closed:
+                raise ConnectionError("WebSocket 连接已关闭")
+
+            await self._ws.send_json(data)
+
+    async def _close_ws(self) -> None:
+        """关闭 WebSocket 连接"""
+        async with self._ws_lock:
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+                self._heartbeat_task = None
+
+            if self._ws:
+                await self._ws.close()
+                self._ws = None
+
+            if self._ws_session:
+                await self._ws_session.close()
+                self._ws_session = None
+
+            self._is_connected = False
+
+    # ---------------------------
+    # req_id 存储
+    # ---------------------------
+
+    async def _save_req_id(
+        self, req_id: str, sender_id: str, chat_type: str, chat_id: str
+    ) -> None:
+        """保存 req_id
+
+        Args:
+            req_id: 请求 ID
             sender_id: 发送者 ID
-            response_url: 回复 URL
             chat_type: 会话类型
             chat_id: 会话 ID
         """
-        async with self._response_url_lock:
+        async with self._req_id_lock:
             # 单聊使用 sender_id，群聊使用 chat_id
             key = f"group:{chat_id}" if chat_type == WECOM_CHATTYPE_GROUP else sender_id
-            self._response_url_store[key] = response_url
+            self._req_id_store[key] = {
+                "req_id": req_id,
+                "chat_type": chat_type,
+                "chat_id": chat_id,
+            }
 
-    async def _get_response_url(self, to_handle: str) -> Optional[str]:
-        """获取 response_url
+    async def _get_req_id(self, to_handle: str) -> Optional[str]:
+        """获取 req_id
 
         Args:
             to_handle: 发送目标
 
         Returns:
-            response_url 或 None
+            req_id 或 None
         """
-        async with self._response_url_lock:
+        async with self._req_id_lock:
             # 尝试直接匹配
-            if to_handle in self._response_url_store:
-                return self._response_url_store[to_handle]
+            if to_handle in self._req_id_store:
+                return self._req_id_store[to_handle]["req_id"]
 
             # 尝试群聊匹配
             group_key = f"group:{to_handle}"
-            if group_key in self._response_url_store:
-                return self._response_url_store[group_key]
+            if group_key in self._req_id_store:
+                return self._req_id_store[group_key]["req_id"]
 
             return None
+
+    # ---------------------------
+    # 心跳
+    # ---------------------------
+
+    async def _heartbeat_loop(self) -> None:
+        """心跳循环"""
+        while not self._stop_event.is_set() and self._is_connected:
+            try:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                await self._send_ping()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"心跳发送失败: {e}")
+                break
+
+    async def _send_ping(self) -> None:
+        """发送心跳"""
+        ping_msg = {
+            "cmd": "ping",
+            "headers": {"req_id": str(uuid.uuid4())},
+        }
+
+        try:
+            await self._send_json(ping_msg)
+            logger.debug("发送心跳成功")
+        except Exception as e:
+            logger.error(f"发送心跳失败: {e}")
+            raise
+
+
+# ---------------------------
+# 工具函数
+# ---------------------------
+
+
+def extract_text_from_mixed(mixed: dict) -> str:
+    """从图文混排消息中提取文本"""
+    items = mixed.get("msg_item", [])
+    texts = []
+
+    for item in items:
+        if item.get("msgtype") == "text":
+            content = item.get("text", {}).get("content", "")
+            if content:
+                texts.append(content)
+
+    return "".join(texts)
+
+
+def build_text_message(text: str) -> dict:
+    """构建文本消息"""
+    return {"msgtype": "text", "text": {"content": text}}
+
+
+def build_mixed_message(items: list) -> dict:
+    """构建图文混排消息"""
+    return {"msgtype": "mixed", "mixed": {"msg_item": items}}
+
+
+def build_markdown_message(content: str) -> dict:
+    """构建 Markdown 消息"""
+    return {"msgtype": "markdown", "markdown": {"content": content}}

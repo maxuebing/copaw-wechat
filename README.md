@@ -4,76 +4,27 @@
 
 ## 功能特性
 
-- 支持企业微信智能机器人消息接收
+- **WebSocket 长连接**：无需公网 IP，内网友好
+- 无需消息加解密
 - 支持文本、图片、文件等多模态消息
 - 支持单聊和群聊
-- 支持引用消息
-- 消息去重
+- 自动重连和心跳保活
 - 访问控制（白名单）
 
 ## 安装
 
 ### 方式一：软链接安装（推荐）
 
-#### Ubuntu/Debian 系统
-
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/maxuebing/copaw-wechat.git
 cd copaw-wechat
 
-# 2. 安装依赖（使用 --break-system-packages 或虚拟环境）
-pip install --break-system-packages -r requirements.txt
+# 2. 安装依赖
+pip install -r requirements.txt
 
 # 3. 创建软链接到 CoPaw 自定义频道目录
 ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
-
-# 4. 重启 CoPaw 服务
-copow app
-```
-
-**或者使用虚拟环境（推荐）：**
-```bash
-# 创建虚拟环境
-python3 -m venv ~/.venv/copaw-wechat
-source ~/.venv/copaw-wechat/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 安装完成后，确保 CoPaw 能找到依赖包
-pip install --break-system-packages -r requirements.txt
-```
-
-#### macOS 系统
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/maxuebing/copaw-wechat.git
-cd copaw-wechat
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 创建软链接
-ln -s $(pwd)/wecom ~/.copaw/custom_channels/wecom
-
-# 4. 重启 CoPaw 服务
-copaw app
-```
-
-#### Windows 系统
-
-```powershell
-# 1. 克隆仓库
-git clone https://github.com/maxuebing/copaw-wechat.git
-cd copaw-wechat
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 创建软链接（需要管理员权限）
-mklink /D "C:\Users\YourName\.copaw\custom_channels\wecom" "C:\path\to\copaw-wechat\wecom"
 
 # 4. 重启 CoPaw 服务
 copaw app
@@ -98,6 +49,12 @@ copaw app
 
 ## 配置
 
+### 企业微信后台配置
+
+1. 进入智能机器人管理后台
+2. 开启「API 模式」并选择「长连接」
+3. 获取 **BotID** 和 **Secret**（长连接专用）
+
 ### Config JSON
 
 在 `~/.copaw/config.json` 中添加：
@@ -107,31 +64,26 @@ copaw app
   "channels": {
     "wecom": {
       "enabled": true,
-      "corp_id": "ww123456",
-      "secret": "your_secret",
-      "aibot_id": "AIBOTID",
-      "token": "your_token",
-      "encoding_aes_key": "43字符的Base64密钥",
+      "bot_id": "YOUR_BOT_ID",
+      "secret": "YOUR_SECRET",
       "bot_prefix": "[BOT] "
     }
   }
 }
 ```
 
-### 企业微信后台配置
+### 配置说明
 
-1. 创建智能机器人应用
-2. 配置回调 URL: `http://your-server:8765/wecom/callback`
-3. 设置 Token 和 EncodingAESKey
-4. 启用「接收消息」事件
-
-## 使用
-
-启动 CoPaw 服务：
-
-```bash
-copaw app
-```
+| 字段 | 说明 | 必填 | 默认值 |
+|------|------|------|--------|
+| `enabled` | 是否启用 | 否 | `false` |
+| `bot_id` | 智能机器人 BotID | 是 | - |
+| `secret` | 长连接专用密钥 | 是 | - |
+| `bot_prefix` | 机器人回复前缀 | 否 | `"[BOT] "` |
+| `dm_policy` | 私聊策略 | 否 | `"open"` |
+| `group_policy` | 群聊策略 | 否 | `"open"` |
+| `allow_from` | 白名单用户 ID 列表 | 否 | `[]` |
+| `deny_message` | 拒绝消息 | 否 | `""` |
 
 ## 验证安装
 
@@ -148,17 +100,14 @@ copaw channels list
 ```
 wecom/
 ├── __init__.py      # 包入口，导出 WeComChannel
-├── channel.py       # WeComChannel 主类
+├── channel.py       # WeComChannel 主类（WebSocket 长连接）
 ├── constants.py     # 常量定义
-├── crypto.py        # 加解密工具
-├── utils.py         # 工具函数
-└── config.py        # 配置类
+└── utils.py         # 工具函数
 ```
 
 ## 依赖
 
-- `aiohttp>=3.8.0` - HTTP 客户端和服务器
-- `pycryptodome>=3.15.0` - 加解密库
+- `aiohttp>=3.8.0` - HTTP 客户端和 WebSocket
 - `agentscope-runtime` - CoPaw 运行时
 
 ## 常见问题
@@ -181,8 +130,15 @@ pip install -r requirements.txt
 
 **方案 3：使用系统包管理器**
 ```bash
-sudo apt install python3-aiohttp python3-pycryptodome
+sudo apt install python3-aiohttp
 ```
+
+### 连接失败
+
+1. 确认 BotID 和 Secret 正确
+2. 确认企业微信后台已开启「长连接 API 模式」
+3. 检查网络连接是否正常
+4. 查看日志获取详细错误信息
 
 ### 软链接创建失败
 
@@ -213,5 +169,5 @@ MIT License
 
 - [CoPaw 官网](https://copaw.agentscope.io/)
 - [CoPaw GitHub](https://github.com/modelscope/agentscope)
-- [企业微信开发文档](https://developer.work.weixin.qq.com/)
+- [企业微信智能机器人长连接文档](https://developer.work.weixin.qq.com/document/path/101463)
 - [仓库地址](https://github.com/maxuebing/copaw-wechat)
