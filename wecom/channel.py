@@ -876,6 +876,7 @@ class WeComChannel(BaseChannel):
             req_id: 关联的请求 ID
             msg: 消息体
         """
+        import sys
         try:
             response_msg = {
                 "cmd": "aibot_respond_msg",
@@ -883,21 +884,32 @@ class WeComChannel(BaseChannel):
                 "body": msg,
             }
 
+            print(f"[DEBUG WeCom] _send_response: 准备发送, cmd={response_msg['cmd']}, req_id={req_id}, msgtype={msg.get('msgtype')}", flush=True)
+
             # 检查是否在正确的事件循环中
             current_loop = asyncio.get_event_loop()
+            print(f"[DEBUG WeCom] _send_response: current_loop={current_loop}, ws_loop={self._loop}, same={current_loop == self._loop}", flush=True)
+
             if current_loop != self._loop:
+                print(f"[DEBUG WeCom] _send_response: 跨线程调用，使用 run_coroutine_threadsafe", flush=True)
                 # 跨线程调用，使用 run_coroutine_threadsafe
                 future = asyncio.run_coroutine_threadsafe(
                     self._send_json(response_msg), self._loop
                 )
-                future.result(timeout=5)  # 等待完成
+                result = future.result(timeout=5)  # 等待完成
+                print(f"[DEBUG WeCom] _send_response: 跨线程发送完成, result={result}", flush=True)
             else:
+                print(f"[DEBUG WeCom] _send_response: 同一线程，直接发送", flush=True)
                 await self._send_json(response_msg)
+                print(f"[DEBUG WeCom] _send_response: 同一线程发送完成", flush=True)
 
             logger.info(f"[WeCom] 发送消息成功: msgtype={msg.get('msgtype')}")
 
         except Exception as e:
+            print(f"[DEBUG WeCom] _send_response 异常: {e}", flush=True)
             logger.error(f"[WeCom] 发送消息异常: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _send_json(self, data: dict) -> None:
         """发送 JSON 数据
@@ -905,11 +917,30 @@ class WeComChannel(BaseChannel):
         Args:
             data: 要发送的数据
         """
-        async with self._ws_lock:
-            if self._ws is None or self._ws.closed:
-                raise ConnectionError("WebSocket 连接已关闭")
+        import sys
+        try:
+            print(f"[DEBUG WeCom] _send_json: 准备发送, data keys={list(data.keys())}", flush=True)
 
-            await self._ws.send_json(data)
+            async with self._ws_lock:
+                print(f"[DEBUG WeCom] _send_json: 获取锁成功", flush=True)
+
+                if self._ws is None:
+                    print(f"[DEBUG WeCom] _send_json: WebSocket 是 None!", flush=True)
+                    raise ConnectionError("WebSocket 连接已关闭")
+
+                if self._ws.closed:
+                    print(f"[DEBUG WeCom] _send_json: WebSocket 已关闭!", flush=True)
+                    raise ConnectionError("WebSocket 连接已关闭")
+
+                print(f"[DEBUG WeCom] _send_json: 即将发送 JSON", flush=True)
+                await self._ws.send_json(data)
+                print(f"[DEBUG WeCom] _send_json: JSON 发送成功", flush=True)
+
+        except Exception as e:
+            print(f"[DEBUG WeCom] _send_json 异常: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            raise
 
     async def _close_ws(self) -> None:
         """关闭 WebSocket 连接"""
