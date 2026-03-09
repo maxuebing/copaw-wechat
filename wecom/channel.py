@@ -738,7 +738,7 @@ class WeComChannel(BaseChannel):
         user_id = getattr(request, "user_id", "") or ""
         chat_id = meta.get("chat_id", "")
 
-        logger.debug(f"get_to_handle_from_request: chat_type={chat_type}, user_id={user_id}, chat_id={chat_id}")
+        logger.info(f"[WeCom] get_to_handle_from_request: chat_type={chat_type}, user_id={user_id}, chat_id={chat_id}")
 
         if chat_type == WECOM_CHATTYPE_GROUP:
             return chat_id
@@ -756,15 +756,15 @@ class WeComChannel(BaseChannel):
         meta = meta or {}
         req_id = meta.get("req_id")
 
-        logger.debug(f"send 被调用: to_handle={to_handle}, meta={meta}, req_id from meta={req_id}")
+        logger.info(f"[WeCom] send 被调用: to_handle={to_handle}, meta={meta}, req_id from meta={req_id}")
 
         if not req_id:
             # 尝试从存储中获取
-            req_id = await self._get_req_id(to_handle)
-            logger.debug(f"从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
+            req_id = self._get_req_id_sync(to_handle)
+            logger.info(f"[WeCom] 从存储获取 req_id: to_handle={to_handle}, req_id={req_id}, stored_keys={list(self._req_id_store.keys())}")
 
         if not req_id:
-            logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
+            logger.warning(f"[WeCom] 没有找到 req_id，无法发送: to_handle={to_handle}")
             return
 
         # 添加机器人前缀
@@ -848,11 +848,21 @@ class WeComChannel(BaseChannel):
                 "body": msg,
             }
 
-            await self._send_json(response_msg)
-            logger.debug(f"发送消息成功: msgtype={msg.get('msgtype')}")
+            # 检查是否在正确的事件循环中
+            current_loop = asyncio.get_event_loop()
+            if current_loop != self._loop:
+                # 跨线程调用，使用 run_coroutine_threadsafe
+                future = asyncio.run_coroutine_threadsafe(
+                    self._send_json(response_msg), self._loop
+                )
+                future.result(timeout=5)  # 等待完成
+            else:
+                await self._send_json(response_msg)
+
+            logger.info(f"[WeCom] 发送消息成功: msgtype={msg.get('msgtype')}")
 
         except Exception as e:
-            logger.error(f"发送消息异常: {e}")
+            logger.error(f"[WeCom] 发送消息异常: {e}")
 
     async def _send_json(self, data: dict) -> None:
         """发送 JSON 数据
@@ -887,6 +897,28 @@ class WeComChannel(BaseChannel):
     # req_id 存储
     # ---------------------------
 
+    def _get_req_id_sync(self, to_handle: str) -> Optional[str]:
+        """同步获取 req_id（用于跨线程调用）
+
+        Args:
+            to_handle: 发送目标
+
+        Returns:
+            req_id 或 None
+        """
+        # 使用普通锁
+        with self._processed_lock:
+            # 尝试直接匹配
+            if to_handle in self._req_id_store:
+                return self._req_id_store[to_handle]["req_id"]
+
+            # 尝试群聊匹配
+            group_key = f"group:{to_handle}"
+            if group_key in self._req_id_store:
+                return self._req_id_store[group_key]["req_id"]
+
+            return None
+
     async def _save_req_id(
         self, req_id: str, sender_id: str, chat_type: str, chat_id: str
     ) -> None:
@@ -898,7 +930,8 @@ class WeComChannel(BaseChannel):
             chat_type: 会话类型
             chat_id: 会话 ID
         """
-        async with self._req_id_lock:
+        # 使用普通锁，不是 asyncio.Lock
+        with self._processed_lock:
             # 单聊使用 sender_id，群聊使用 chat_id
             key = f"group:{chat_id}" if chat_type == WECOM_CHATTYPE_GROUP else sender_id
             self._req_id_store[key] = {
@@ -906,7 +939,7 @@ class WeComChannel(BaseChannel):
                 "chat_type": chat_type,
                 "chat_id": chat_id,
             }
-            logger.debug(f"保存 req_id: key={key}, req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
+            logger.info(f"[WeCom] 保存 req_id: key={key}, req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
 
     async def _get_req_id(self, to_handle: str) -> Optional[str]:
         """获取 req_id
