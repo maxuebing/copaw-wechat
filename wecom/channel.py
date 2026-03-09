@@ -288,7 +288,14 @@ class WeComChannel(BaseChannel):
         4. 启动心跳任务
         5. 启动消息接收循环
         """
-        logger.info("启动企业微信频道（长连接模式）...")
+        # 显示版本号
+        try:
+            from . import __version__
+            print(f"[WeCom Channel] v{__version__} 启动中...")
+            logger.info(f"企业微信频道 v{__version__} 启动中（长连接模式）...")
+        except ImportError:
+            print("[WeCom Channel] 启动中...")
+            logger.info("启动企业微信频道（长连接模式）...")
 
         self._stop_event.clear()
         self._should_reconnect = True

@@ -8,4 +8,4 @@ from .channel import WeComChannel
 
 __all__ = ["WeComChannel"]
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"  # 长连接模式
