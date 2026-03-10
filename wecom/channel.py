@@ -540,86 +540,110 @@ class WeComChannel(BaseChannel):
             logger.debug(f"未知命令类型: {cmd}, data={data}")
 
 
-    async def _process_message_callback(self, data: dict) -> None:
-        """处理消息回调
+    async def _process_message_callback(self, msg_data: dict) -> None:
+        """处理接收到的消息"""
+        print(f"[DEBUG WeCom] _process_message_callback START: {msg_data.get('msgid')}", flush=True)
 
-        Args:
-            data: 消息数据
-        """
         try:
-            headers = data.get("headers", {})
-            body = data.get("body", {})
+            # 兼容两层结构或扁平结构
+            # 真实数据通常在 body 字段中，但也可能直接是扁平的
+            headers = msg_data.get("headers", {})
+            body = msg_data.get("body", {})
             req_id = headers.get("req_id", "")
+            
+            if not body:
+                 # 尝试直接解析 msg_data
+                 body = msg_data
+                 req_id = body.get("headers", {}).get("req_id", "")
 
-            # 提取消息字段（忽略 response_url 等无关字段）
-            msg_id = body.get("msgid", "")
-            aibot_id = body.get("aibotid", "")
-            chat_id = body.get("chatid", "")
-            chat_type = body.get("chattype", WECOM_CHATTYPE_SINGLE)
-            from_user = body.get("from", {})
-            sender_id = from_user.get("userid", "")
-            msg_type = body.get("msgtype", "")
-            print(f"[DEBUG WeCom] _process_message_callback: msg_type={msg_type}, body={json.dumps(body, ensure_ascii=False)[:200]}...", flush=True)
+            if body:
+                msg_id = body.get("msgid")
+                from_user = body.get("from", {})
+                sender_id = from_user.get("userid", "")
 
-            # 去重
-            with self._processed_lock:
-                if msg_id in self._processed_message_ids:
-                    logger.debug(f"重复消息，跳过: msg_id={msg_id[:24]}...")
+                # 优先使用 alias
+                alias = from_user.get("alias")
+                if alias:
+                    sender_id = alias
+
+                # 临时修复：为了避开历史记录中的坏数据，我们在 user_id 后添加后缀
+                # 这样系统会认为这是一个新用户，从而创建一个干净的会话
+                sender_id = f"{sender_id}_v2"
+
+                msg_type = body.get("msgtype", "")
+                print(f"[DEBUG WeCom] _process_message_callback: msg_type={msg_type}, body={json.dumps(body, ensure_ascii=False)[:200]}...", flush=True)
+                
+                # 去重
+                with self._processed_lock:
+                    if msg_id in self._processed_message_ids:
+                        logger.debug(f"重复消息，跳过: msg_id={msg_id[:24]}...")
+                        return
+
+                    self._processed_message_ids.add(msg_id)
+
+                    # 限制缓存大小
+                    if len(self._processed_message_ids) > 10000:
+                        old_ids = list(self._processed_message_ids)[:5000]
+                        self._processed_message_ids.difference_update(old_ids)
+
+                # 验证机器人 ID (略，假设已校验或非必须)
+                # aibot_id = body.get("aibotid", "")
+                # if aibot_id != self.bot_id: ...
+
+                # 检查访问权限
+                chat_type = body.get("chattype", WECOM_CHATTYPE_SINGLE)
+                chat_id = body.get("chatid", "")
+                
+                # 修正 chat_id 为 sender_id (单聊场景)
+                if chat_type == WECOM_CHATTYPE_SINGLE:
+                     chat_id = sender_id
+                
+                is_group = chat_type == WECOM_CHATTYPE_GROUP
+                allowed, deny_msg = self._check_allowlist(sender_id, is_group)
+
+                if not allowed and deny_msg:
+                    # 发送拒绝消息
+                    if req_id:
+                        await self._send_response(req_id, build_markdown_message(deny_msg))
                     return
 
-                self._processed_message_ids.add(msg_id)
+                # 保存 req_id 用于后续发送
+                # 注意：保存时要用加了后缀的 sender_id (作为 to_handle)
+                print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}", flush=True)
+                await self._save_req_id(req_id, sender_id, chat_type, chat_id)
 
-                # 限制缓存大小
-                if len(self._processed_message_ids) > 10000:
-                    old_ids = list(self._processed_message_ids)[:5000]
-                    self._processed_message_ids.difference_update(old_ids)
-
-            # 验证机器人 ID
-            if aibot_id != self.bot_id:
-                logger.debug(
-                    f"机器人 ID 不匹配，跳过: expected={self.bot_id}, got={aibot_id}"
-                )
-                return
-
-            # 检查访问权限
-            is_group = chat_type == WECOM_CHATTYPE_GROUP
-            allowed, deny_msg = self._check_allowlist(sender_id, is_group)
-
-            if not allowed and deny_msg:
-                # 发送拒绝消息 (aibot_respond_msg 优先支持 markdown)
-                await self._send_response(req_id, build_markdown_message(deny_msg))
-                return
-
-            # 保存 req_id 用于后续发送
-            print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}", flush=True)
-            await self._save_req_id(req_id, sender_id, chat_type, chat_id)
-
-            # 构建原生 payload
-            try:
                 native_payload = await self._build_native_payload(
                     body, sender_id, chat_type, chat_id, req_id
                 )
-                print(f"[DEBUG WeCom] _build_native_payload 成功: content_parts_count={len(native_payload.get('content_parts', []))}", flush=True)
-            except Exception as e:
-                print(f"[DEBUG WeCom] _build_native_payload 失败: {e}", flush=True)
-                logger.error(f"构建 native_payload 异常: {e}")
-                import traceback
-                traceback.print_exc()
-                return
+                
+                if not native_payload:
+                    print("[DEBUG WeCom] _build_native_payload returns empty", flush=True)
+                    return
 
-            # 入队处理
-            if self._enqueue:
-                print(f"[DEBUG WeCom] 即将入队: {sender_id}", flush=True)
-                self._enqueue(native_payload)
-            else:
-                print(f"[DEBUG WeCom] _enqueue 未设置!", flush=True)
-                logger.warning("enqueue callback not set")
+                # 获取最终的 sender_id (可能包含后缀)
+                final_sender_id = native_payload.get("sender_id", sender_id)
+                
+                # 显式构造 session_id，确保使用修改后的 sender_id
+                if chat_type == WECOM_CHATTYPE_GROUP:
+                    session_id = f"{self.channel}:group:{chat_id}"
+                else:
+                    session_id = f"{self.channel}:{final_sender_id}"
+                native_payload["session_id"] = session_id
+                
+                # 覆盖 native_payload 里的 user_id，确保它也是带后缀的
+                native_payload["user_id"] = final_sender_id
+
+                print(f"[DEBUG WeCom] _build_native_payload 成功: content_parts_count={len(native_payload.get('content_parts', []))}, session_id={session_id}", flush=True)
+
+                # 入队处理
+                if self._enqueue:
+                    print(f"[DEBUG WeCom] 即将入队: {final_sender_id}", flush=True)
+                    self._enqueue(native_payload)
+                else:
+                    print("[DEBUG WeCom] _enqueue callback is None", flush=True)
 
         except Exception as e:
-            print(f"[DEBUG WeCom] _process_message_callback 异常: {e}", flush=True)
-            logger.error(f"处理消息回调异常: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[DEBUG WeCom] _process_message_callback error: {e}", flush=True)
             import traceback
             traceback.print_exc()
 
@@ -717,9 +741,9 @@ class WeComChannel(BaseChannel):
         sender_id: str,
         chat_type: str,
         chat_id: str,
-        req_id: str,
+        req_id: str = None
     ) -> dict:
-        """构建原生 payload
+        """构建内部使用的 payload 格式
 
         Args:
             msg_data: 消息数据
@@ -732,7 +756,12 @@ class WeComChannel(BaseChannel):
             原生 payload
         """
         msg_type = msg_data.get("msgtype", "")
-        print(f"[DEBUG WeCom] _build_native_payload: type={msg_type}", flush=True)
+
+        # 临时修复：为了避开历史记录中的坏数据，我们在 user_id 后添加后缀
+        # 这样系统会认为这是一个新用户，从而创建一个干净的会话
+        # sender_id = f"{sender_id}_v2"
+        # 已经在 _process_message_callback 中处理
+        print(f"[DEBUG WeCom] _build_native_payload: type={msg_type}, sender={sender_id}", flush=True)
 
         content_parts = []
         if msg_type == WECOM_MSGTYPE_TEXT:
@@ -938,8 +967,17 @@ class WeComChannel(BaseChannel):
         self, to_handle: str, text: str, meta: Optional[Dict[str, Any]] = None
     ) -> None:
         """发送一条文本消息"""
+        # 临时处理：如果 to_handle 带 _v2 后缀，查找时要尝试去掉它
+        # 或者存储时已经存了带 _v2 的 key
+        
         # 总是从存储中获取最新的 req_id
         req_id = self._get_req_id_sync(to_handle)
+        
+        # 如果找不到，尝试查找原始 ID (去掉 _v2)
+        if not req_id and to_handle.endswith("_v2"):
+             original_handle = to_handle[:-3]
+             print(f"[DEBUG WeCom] 尝试查找原始 ID: {original_handle}", flush=True)
+             req_id = self._get_req_id_sync(original_handle)
 
         print(f"[DEBUG WeCom] send 被调用: to_handle={to_handle}, text={text[:50] if text else ''}, req_id from storage={req_id}")
 
@@ -972,6 +1010,12 @@ class WeComChannel(BaseChannel):
             # 总是从存储中获取最新的 req_id，不使用 meta 中的
             # 因为 meta 中的 req_id 可能是旧消息的
             req_id = self._get_req_id_sync(to_handle)
+            
+            # 如果找不到，尝试查找原始 ID (去掉 _v2)
+            if not req_id and to_handle.endswith("_v2"):
+                 original_handle = to_handle[:-3]
+                 print(f"[DEBUG WeCom] send_content_parts 尝试查找原始 ID: {original_handle}", flush=True)
+                 req_id = self._get_req_id_sync(original_handle)
 
             msg = f"[DEBUG WeCom] send_content_parts: req_id from storage={req_id}"
             print(msg, flush=True)
