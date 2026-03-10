@@ -8,7 +8,7 @@ from .channel import WeComChannel
 
 __all__ = ["WeComChannel"]
 
-__version__ = "2.1.8"  # 使用消息中的 image.aeskey 自动解密企业微信图片
+__version__ = "2.1.9"  # 修复 mixed 类型消息中图片未获取 aeskey 的问题
 
 # Monkey Patch: 修复 agentscope 对图片路径后缀校验过于严格的问题，以及 API 无法访问本地路径的问题
 # 当历史记录中存在本地图片路径（无论是否有后缀）时，都会导致 TypeError 或 API 400 错误

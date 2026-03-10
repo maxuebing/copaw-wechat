@@ -14,6 +14,9 @@
 
 ## 更新日志
 
+### v2.1.9
+- **修复**: 修复 `mixed` 类型消息中图片未获取 `aeskey` 导致无法解密的问题。
+
 ### v2.1.8
 - **新增**: 支持企业微信图片自动解密。从消息中的 `image.aeskey` 字段获取解密密钥，无需额外配置。
 - **修复**: 彻底解决企业微信图片加密导致的 `The image format is illegal and cannot be opened` 错误。

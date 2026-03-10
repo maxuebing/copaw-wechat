@@ -1095,8 +1095,9 @@ class WeComChannel(BaseChannel):
             for item in mixed.get("msg_item", []):
                 if item.get("msgtype") == "image":
                     image_url = item.get("image", {}).get("url", "")
+                    image_aeskey = item.get("image", {}).get("aeskey", "")  # 获取图片解密密钥
                     if image_url:
-                        data_url = await self._process_image_url(image_url)
+                        data_url = await self._process_image_url(image_url, aes_key=image_aeskey)
                         print(f"[DEBUG WeCom] _build_native_payload (mixed): 图片转换为 Base64 完成", flush=True)
                         try:
                             content_parts.append(
