@@ -423,17 +423,43 @@ class WeComChannel(BaseChannel):
             "body": {"bot_id": self.bot_id, "secret": self.secret},
         }
 
-        await self._send_json(subscribe_msg)
+        # 直接发送订阅请求，不通过 _send_json（因为我们需要等待特定的订阅响应）
+        async with self._ws_lock:
+            await self._ws.send_json(subscribe_msg)
+            logger.info(f"发送订阅请求: bot_id={self.bot_id}")
 
-        # 等待订阅响应
-        response = await self._ws.receive()
-        response_data = response.json()
+            # 等待订阅响应
+            response = await self._ws.receive()
 
-        if response_data.get("errcode") != 0:
-            raise Exception(f"订阅失败: {response_data}")
+            # 解析响应
+            if response.type == aiohttp.WSMsgType.TEXT:
+                response_data = json.loads(response.data)
+            elif response.type == aiohttp.WSMsgType.BINARY:
+                response_data = json.loads(response.data)
+            elif response.type == aiohttp.WSMsgType.CLOSED:
+                raise ConnectionError("WebSocket 连接已关闭")
+            elif response.type == aiohttp.WSMsgType.ERROR:
+                raise ConnectionError(f"WebSocket 错误: {response}")
+            else:
+                raise ValueError(f"未知的消息类型: {response.type}")
+
+            errcode = response_data.get("errcode", -1)
+            errmsg = response_data.get("errmsg", "")
+
+            if errcode != 0:
+                raise Exception(f"订阅失败: errcode={errcode}, errmsg={errmsg}")
+
+            logger.info(f"订阅成功: bot_id={self.bot_id}")
 
     async def _receive_loop(self) -> None:
-        """消息接收循环"""
+        """消息接收循环
+
+        接收并分发所有消息：
+        - aibot_msg_callback: 消息回调
+        - aibot_event_callback: 事件回调
+        - errcode/errmsg 响应: 命令执行结果
+        - ping: 心跳响应
+        """
         logger.info("开始接收消息...")
 
         while not self._stop_event.is_set():
@@ -444,7 +470,7 @@ class WeComChannel(BaseChannel):
 
                 msg = await self._ws.receive()
 
-                # msg.json 是方法，需要调用
+                # 解析消息
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
                 elif msg.type == aiohttp.WSMsgType.BINARY:
@@ -452,45 +478,53 @@ class WeComChannel(BaseChannel):
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(f"WebSocket 错误: {msg}")
                     break
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    logger.warning("WebSocket 连接已关闭")
+                    break
                 else:
                     logger.debug(f"收到非消息类型: {msg.type}")
                     continue
 
-                await self._handle_ws_message(data)
+                # 分发消息
+                await self._dispatch_message(data)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"接收消息异常: {e}")
+                import traceback
+                traceback.print_exc()
                 if not self._is_connected:
                     break
 
-    async def _handle_ws_message(self, data: dict) -> None:
-        """处理 WebSocket 消息
+    async def _dispatch_message(self, data: dict) -> None:
+        """分发收到的消息
 
         Args:
             data: 消息数据
         """
         cmd = data.get("cmd", "")
-        headers = data.get("headers", {})
-        body = data.get("body", {})
-        req_id = headers.get("req_id", "")
 
-        # 处理不同类型的消息
+        # 检查是否是响应（有 errcode 字段表示是命令执行结果）
+        if "errcode" in data:
+            errcode = data.get("errcode", -1)
+            errmsg = data.get("errmsg", "")
+            if errcode == 0:
+                logger.debug(f"命令执行成功")
+            else:
+                logger.warning(f"命令执行失败: errcode={errcode}, errmsg={errmsg}")
+            return
+
+        # 处理推送类型的消息
         if cmd == "aibot_msg_callback":
-            # 消息回调
             await self._process_message_callback(data)
-
         elif cmd == "aibot_event_callback":
-            # 事件回调
             await self._process_event_callback(data)
-
         elif cmd == "ping":
-            # 心跳响应
             logger.debug("收到心跳响应")
-
         else:
-            logger.debug(f"未知命令类型: {cmd}")
+            logger.debug(f"未知命令类型: {cmd}, data={data}")
+
 
     async def _process_message_callback(self, data: dict) -> None:
         """处理消息回调
@@ -567,23 +601,33 @@ class WeComChannel(BaseChannel):
         Args:
             data: 事件数据
         """
-        headers = data.get("headers", {})
-        body = data.get("body", {})
-        event = body.get("event", {})
-        event_type = event.get("eventtype", "")
+        try:
+            headers = data.get("headers", {})
+            body = data.get("body", {})
+            event = body.get("event", {})
+            event_type = event.get("eventtype", "")
 
-        if event_type == "enter_chat":
-            # 进入会话事件 - 可以发送欢迎语
-            logger.info("用户进入会话")
-            # TODO: 实现欢迎语
+            if event_type == "enter_chat":
+                # 进入会话事件 - 可以发送欢迎语
+                logger.info(f"用户进入会话: {data.get('body', {}).get('from', {})}")
+                # TODO: 实现欢迎语
 
-        elif event_type == "disconnected_event":
-            # 连接断开事件
-            logger.warning("收到连接断开事件，准备重连...")
-            self._is_connected = False
+            elif event_type == "disconnected_event":
+                # 连接断开事件
+                logger.warning("收到连接断开事件，准备重连...")
+                self._is_connected = False
 
-        else:
-            logger.debug(f"未处理的事件类型: {event_type}")
+            else:
+                logger.debug(f"未处理的事件类型: {event_type}")
+
+            # 发送空响应确认事件已处理（企业微信要求所有回调都需要确认）
+            # 事件回调通常不需要响应，但为了协议完整性，我们记录一下
+            logger.debug(f"事件回调已处理: event_type={event_type}")
+
+        except Exception as e:
+            logger.error(f"处理事件回调异常: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _build_native_payload(
         self,
@@ -909,14 +953,14 @@ class WeComChannel(BaseChannel):
             traceback.print_exc()
 
     async def _send_json(self, data: dict) -> None:
-        """发送 JSON 数据
+        """发送 JSON 数据（不等待响应）
 
         Args:
             data: 要发送的数据
         """
         import sys
         try:
-            print(f"[DEBUG WeCom] _send_json: 准备发送, data={data}", flush=True)
+            print(f"[DEBUG WeCom] _send_json: 准备发送, cmd={data.get('cmd')}", flush=True)
 
             async with self._ws_lock:
                 print(f"[DEBUG WeCom] _send_json: 获取锁成功", flush=True)
@@ -931,33 +975,7 @@ class WeComChannel(BaseChannel):
 
                 print(f"[DEBUG WeCom] _send_json: 即将发送 JSON", flush=True)
                 await self._ws.send_json(data)
-                print(f"[DEBUG WeCom] _send_json: JSON 发送成功，等待响应...", flush=True)
-
-                # 等待企业微信的响应
-                try:
-                    response = await asyncio.wait_for(
-                        self._ws.receive(),
-                        timeout=5.0
-                    )
-                    print(f"[DEBUG WeCom] _send_json: 收到响应, type={response.type}", flush=True)
-
-                    if response.type == aiohttp.WSMsgType.TEXT:
-                        response_data = json.loads(response.data)
-                        print(f"[DEBUG WeCom] _send_json: 响应数据={response_data}", flush=True)
-
-                        errcode = response_data.get("errcode", -1)
-                        errmsg = response_data.get("errmsg", "")
-                        if errcode != 0:
-                            print(f"[DEBUG WeCom] _send_json: 企业微信返回错误: errcode={errcode}, errmsg={errmsg}", flush=True)
-                        else:
-                            print(f"[DEBUG WeCom] _send_json: 企业微信确认成功", flush=True)
-
-                    elif response.type == aiohttp.WSMsgType.CLOSED:
-                        print(f"[DEBUG WeCom] _send_json: WebSocket 已关闭", flush=True)
-                        raise ConnectionError("WebSocket 连接已关闭")
-
-                except asyncio.TimeoutError:
-                    print(f"[DEBUG WeCom] _send_json: 等待响应超时（5秒）", flush=True)
+                print(f"[DEBUG WeCom] _send_json: JSON 发送成功", flush=True)
 
         except Exception as e:
             print(f"[DEBUG WeCom] _send_json 异常: {e}", flush=True)
