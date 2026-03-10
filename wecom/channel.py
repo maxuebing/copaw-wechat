@@ -748,27 +748,28 @@ class WeComChannel(BaseChannel):
         # 检查 data_url 是否有效 (agentscope 要求必须有后缀或为 data: 开头)
         if not data_url.startswith("data:") and not any(data_url.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
             print(f"[DEBUG WeCom] data_url 缺少后缀，尝试修复: {data_url}", flush=True)
+            # 如果转换 Base64 失败导致返回了本地路径，再次尝试强制转换
+            # 如果再次失败，则返回占位符，绝对不要返回本地路径
             try:
+                import mimetypes
+                import base64
+                
                 p_old = Path(data_url)
-                # 如果文件存在，尝试创建带后缀的软链接
                 if p_old.exists():
-                    # 确保是绝对路径
-                    p_old = p_old.resolve()
-                    # 尝试添加 .jpg 后缀
-                    p_new = p_old.with_name(p_old.name + ".jpg")
+                    mime_type, _ = mimetypes.guess_type(str(p_old))
+                    if not mime_type:
+                        mime_type = "image/jpeg"
                     
-                    if not p_new.exists():
-                        os.symlink(p_old, p_new)
-                        print(f"[DEBUG WeCom] 创建软链接: {p_new} -> {p_old}", flush=True)
-                    
-                    data_url = str(p_new)
+                    with open(p_old, "rb") as f:
+                        encoded = base64.b64encode(f.read()).decode("utf-8")
+                        data_url = f"data:{mime_type};base64,{encoded}"
+                        print(f"[DEBUG WeCom] 强制修复: 已转换为 Base64", flush=True)
                 else:
-                    # 文件不存在，直接追加后缀以通过格式校验
-                    data_url = f"{data_url}.jpg"
+                    raise FileNotFoundError(f"File not found: {data_url}")
             except Exception as e:
-                print(f"[DEBUG WeCom] 修复后缀失败: {e}", flush=True)
-                # 降级处理：直接追加后缀
-                data_url = f"{data_url}.jpg"
+                print(f"[DEBUG WeCom] 强制修复失败: {e}，使用占位符", flush=True)
+                # 降级处理：使用 1x1 透明 GIF，防止 API 报错
+                data_url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 
         return data_url
 
