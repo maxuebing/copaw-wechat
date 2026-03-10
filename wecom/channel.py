@@ -925,7 +925,33 @@ class WeComChannel(BaseChannel):
 
                 print(f"[DEBUG WeCom] _send_json: 即将发送 JSON", flush=True)
                 await self._ws.send_json(data)
-                print(f"[DEBUG WeCom] _send_json: JSON 发送成功", flush=True)
+                print(f"[DEBUG WeCom] _send_json: JSON 发送成功，等待响应...", flush=True)
+
+                # 等待企业微信的响应
+                try:
+                    response = await asyncio.wait_for(
+                        self._ws.receive(),
+                        timeout=5.0
+                    )
+                    print(f"[DEBUG WeCom] _send_json: 收到响应, type={response.type}", flush=True)
+
+                    if response.type == aiohttp.WSMsgType.TEXT:
+                        response_data = json.loads(response.data)
+                        print(f"[DEBUG WeCom] _send_json: 响应数据={response_data}", flush=True)
+
+                        errcode = response_data.get("errcode", -1)
+                        errmsg = response_data.get("errmsg", "")
+                        if errcode != 0:
+                            print(f"[DEBUG WeCom] _send_json: 企业微信返回错误: errcode={errcode}, errmsg={errmsg}", flush=True)
+                        else:
+                            print(f"[DEBUG WeCom] _send_json: 企业微信确认成功", flush=True)
+
+                    elif response.type == aiohttp.WSMsgType.CLOSED:
+                        print(f"[DEBUG WeCom] _send_json: WebSocket 已关闭", flush=True)
+                        raise ConnectionError("WebSocket 连接已关闭")
+
+                except asyncio.TimeoutError:
+                    print(f"[DEBUG WeCom] _send_json: 等待响应超时（5秒）", flush=True)
 
         except Exception as e:
             print(f"[DEBUG WeCom] _send_json 异常: {e}", flush=True)
