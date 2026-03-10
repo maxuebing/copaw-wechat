@@ -681,6 +681,7 @@ class WeComChannel(BaseChannel):
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
             if image_url:
+                image_url = fix_wecom_image_url(image_url)
                 print(f"[DEBUG WeCom] _build_native_payload: 识别到图片 {image_url}", flush=True)
                 try:
                     # 尝试兼容不同的 ImageContent 参数
@@ -703,6 +704,7 @@ class WeComChannel(BaseChannel):
                 if item.get("msgtype") == "image":
                     image_url = item.get("image", {}).get("url", "")
                     if image_url:
+                        image_url = fix_wecom_image_url(image_url)
                         print(f"[DEBUG WeCom] _build_native_payload (mixed): 识别到图片 {image_url}", flush=True)
                         try:
                             content_parts.append(
@@ -1209,3 +1211,29 @@ def build_mixed_message(items: list) -> dict:
 def build_markdown_message(content: str) -> dict:
     """构建 Markdown 消息"""
     return {"msgtype": "markdown", "markdown": {"content": content}}
+
+
+def fix_wecom_image_url(url: str) -> str:
+    """修复企业微信图片 URL 缺少扩展名的问题
+
+    企业微信的智能机器人图片 URL 经常不带扩展名，例如:
+    https://.../Cxlj9ue/7615488012360294876?sign=...
+    这会导致 AgentScope 的 OpenAI 格式化工具报错。
+    通过在 URL 末尾添加 #.jpg 锚点，可以骗过扩展名检查，同时不影响实际下载。
+    """
+    if not url:
+        return url
+
+    # 检查 URL 路径部分是否已有扩展名
+    path_part = url.split("?")[0].split("#")[0]
+    supported_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+    if not path_part.lower().endswith(supported_extensions):
+        # 如果没有扩展名，在末尾添加 #.jpg
+        # 如果已有 fragment，则不处理
+        if "#" not in url:
+            fixed_url = url + "#.jpg"
+            print(f"[DEBUG WeCom] fix_wecom_image_url: 原始 URL 无后缀, 已添加锚点: {fixed_url[:100]}...", flush=True)
+            return fixed_url
+
+    return url

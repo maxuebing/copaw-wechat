@@ -13,6 +13,10 @@
 
 ## 更新日志
 
+### v2.0.2
+- **修复**: 解决企业微信图片 URL 缺少扩展名导致 AgentScope/OpenAI 格式化报错的问题（通过添加 `#.jpg` 锚点）。
+- **优化**: 完善 `_build_native_payload` 和 `send_content_parts` 的多模态处理日志。
+
 ### v2.0.1
 - **修复**: 解决 `aibot_respond_msg` 回复 `40008` (invalid message type) 错误，统一使用 `markdown` 类型发送。
 - **优化**: 增加 WebSocket 消息解析的健壮性，处理 `ServerTimeoutError` 异常。
