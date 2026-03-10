@@ -435,11 +435,14 @@ class WeComChannel(BaseChannel):
             if response.type == aiohttp.WSMsgType.TEXT:
                 response_data = json.loads(response.data)
             elif response.type == aiohttp.WSMsgType.BINARY:
-                response_data = json.loads(response.data)
+                if isinstance(response.data, (str, bytes, bytearray)):
+                    response_data = json.loads(response.data)
+                else:
+                    raise ConnectionError(f"收到非法的二进制数据: {type(response.data)}")
             elif response.type == aiohttp.WSMsgType.CLOSED:
                 raise ConnectionError("WebSocket 连接已关闭")
             elif response.type == aiohttp.WSMsgType.ERROR:
-                raise ConnectionError(f"WebSocket 错误: {response}")
+                raise ConnectionError(f"WebSocket 错误: {response.data}")
             else:
                 raise ValueError(f"未知的消息类型: {response.type}")
 
@@ -474,9 +477,13 @@ class WeComChannel(BaseChannel):
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
                 elif msg.type == aiohttp.WSMsgType.BINARY:
-                    data = json.loads(msg.data)
+                    if isinstance(msg.data, (str, bytes, bytearray)):
+                        data = json.loads(msg.data)
+                    else:
+                        logger.error(f"收到非法的二进制数据: {type(msg.data)}")
+                        continue
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"WebSocket 错误: {msg}")
+                    logger.error(f"WebSocket 错误: {msg.data}")
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     logger.warning("WebSocket 连接已关闭")
@@ -933,11 +940,28 @@ class WeComChannel(BaseChannel):
 
             if current_loop != self._loop:
                 print(f"[DEBUG WeCom] _send_response: 跨线程调用，使用 run_coroutine_threadsafe", flush=True)
+                
+                # 检查事件循环是否运行
+                if not self._loop or not self._loop.is_running():
+                    print(f"[DEBUG WeCom] _send_response ERROR: WebSocket 事件循环未运行!", flush=True)
+                    logger.error("WebSocket 事件循环未运行，无法跨线程发送消息")
+                    return
+
                 # 跨线程调用，使用 run_coroutine_threadsafe
                 future = asyncio.run_coroutine_threadsafe(
                     self._send_json(response_msg), self._loop
                 )
-                # 不等待结果，让发送异步完成
+                
+                # 添加完成后的回调，用于记录错误
+                def _on_sent(fut: asyncio.Future):
+                    try:
+                        fut.result()
+                        print(f"[DEBUG WeCom] _send_response: 跨线程发送成功", flush=True)
+                    except Exception as e:
+                        print(f"[DEBUG WeCom] _send_response: 跨线程发送失败: {e}", flush=True)
+                        logger.error(f"跨线程发送消息失败: {e}")
+                
+                future.add_done_callback(_on_sent)
                 print(f"[DEBUG WeCom] _send_response: 跨线程调用已提交", flush=True)
             else:
                 print(f"[DEBUG WeCom] _send_response: 同一线程，直接发送", flush=True)
