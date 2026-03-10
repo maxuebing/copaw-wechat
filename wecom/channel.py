@@ -498,62 +498,68 @@ class WeComChannel(BaseChannel):
         Args:
             data: 消息数据
         """
-        headers = data.get("headers", {})
-        body = data.get("body", {})
-        req_id = headers.get("req_id", "")
+        try:
+            headers = data.get("headers", {})
+            body = data.get("body", {})
+            req_id = headers.get("req_id", "")
 
-        # 提取消息字段
-        msg_id = body.get("msgid", "")
-        aibot_id = body.get("aibotid", "")
-        chat_id = body.get("chatid", "")
-        chat_type = body.get("chattype", WECOM_CHATTYPE_SINGLE)
-        from_user = body.get("from", {})
-        sender_id = from_user.get("userid", "")
-        msg_type = body.get("msgtype", "")
+            # 提取消息字段（忽略 response_url 等无关字段）
+            msg_id = body.get("msgid", "")
+            aibot_id = body.get("aibotid", "")
+            chat_id = body.get("chatid", "")
+            chat_type = body.get("chattype", WECOM_CHATTYPE_SINGLE)
+            from_user = body.get("from", {})
+            sender_id = from_user.get("userid", "")
+            msg_type = body.get("msgtype", "")
 
-        # 去重
-        with self._processed_lock:
-            if msg_id in self._processed_message_ids:
-                logger.debug(f"重复消息，跳过: msg_id={msg_id[:24]}...")
+            # 去重
+            with self._processed_lock:
+                if msg_id in self._processed_message_ids:
+                    logger.debug(f"重复消息，跳过: msg_id={msg_id[:24]}...")
+                    return
+
+                self._processed_message_ids.add(msg_id)
+
+                # 限制缓存大小
+                if len(self._processed_message_ids) > 10000:
+                    old_ids = list(self._processed_message_ids)[:5000]
+                    self._processed_message_ids.difference_update(old_ids)
+
+            # 验证机器人 ID
+            if aibot_id != self.bot_id:
+                logger.debug(
+                    f"机器人 ID 不匹配，跳过: expected={self.bot_id}, got={aibot_id}"
+                )
                 return
 
-            self._processed_message_ids.add(msg_id)
+            # 检查访问权限
+            is_group = chat_type == WECOM_CHATTYPE_GROUP
+            allowed, deny_msg = self._check_allowlist(sender_id, is_group)
 
-            # 限制缓存大小
-            if len(self._processed_message_ids) > 10000:
-                old_ids = list(self._processed_message_ids)[:5000]
-                self._processed_message_ids.difference_update(old_ids)
+            if not allowed and deny_msg:
+                # 发送拒绝消息
+                await self._send_response(req_id, build_text_message(deny_msg))
+                return
 
-        # 验证机器人 ID
-        if aibot_id != self.bot_id:
-            logger.debug(
-                f"机器人 ID 不匹配，跳过: expected={self.bot_id}, got={aibot_id}"
+            # 保存 req_id 用于后续发送
+            print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
+            await self._save_req_id(req_id, sender_id, chat_type, chat_id)
+
+            # 构建原生 payload
+            native_payload = await self._build_native_payload(
+                body, sender_id, chat_type, chat_id, req_id
             )
-            return
 
-        # 检查访问权限
-        is_group = chat_type == WECOM_CHATTYPE_GROUP
-        allowed, deny_msg = self._check_allowlist(sender_id, is_group)
+            # 入队处理
+            if self._enqueue:
+                self._enqueue(native_payload)
+            else:
+                logger.warning("enqueue callback not set")
 
-        if not allowed and deny_msg:
-            # 发送拒绝消息
-            await self._send_response(req_id, build_text_message(deny_msg))
-            return
-
-        # 保存 req_id 用于后续发送
-        print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
-        await self._save_req_id(req_id, sender_id, chat_type, chat_id)
-
-        # 构建原生 payload
-        native_payload = await self._build_native_payload(
-            body, sender_id, chat_type, chat_id, req_id
-        )
-
-        # 入队处理
-        if self._enqueue:
-            self._enqueue(native_payload)
-        else:
-            logger.warning("enqueue callback not set")
+        except Exception as e:
+            logger.error(f"处理消息回调异常: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _process_event_callback(self, data: dict) -> None:
         """处理事件回调
