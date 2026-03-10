@@ -12,48 +12,8 @@
 - 自动重连和心跳保活
 - 访问控制（白名单）
 
-## 更新日志
+<img width="879" height="806" alt="image" src="https://github.com/user-attachments/assets/cc5fd67c-b8ad-4938-9eb2-c56993fc72f8" />
 
-### v2.2.0
-- **新增**: 支持企业微信文件解密。自动使用 `file.aeskey` 解密加密的文件（如 ZIP、PDF 等）。
-- **新增**: 新增 `_process_file_url` 方法，统一处理文件的下载、解密和缓存。
-
-### v2.1.9
-- **修复**: 修复 `mixed` 类型消息中图片未获取 `aeskey` 导致无法解密的问题。
-
-### v2.1.8
-- **新增**: 支持企业微信图片自动解密。从消息中的 `image.aeskey` 字段获取解密密钥，无需额外配置。
-- **修复**: 彻底解决企业微信图片加密导致的 `The image format is illegal and cannot be opened` 错误。
-
-### v2.1.7
-- **新增**: 支持企业微信图片解密（AES-256-CBC）。如果图片被加密，插件会自动使用配置的 `encoding_aes_key` 解密。
-- **新增**: 新增 `encoding_aes_key` 配置参数（43位字符），用于解密企业微信图片。
-- **修复**: 彻底解决企业微信图片加密导致的 `The image format is illegal and cannot be opened` 错误。
-
-### v2.1.4
-- **修复**: 自动检测图片格式（通过文件头识别），修复企业微信图片强制使用 `image/jpeg` 导致的 `InvalidParameter: The image format is illegal and cannot be opened` 错误。
-
-### v2.1.3
-- **增强**: 增强图片路径处理，确保所有本地路径都转换为 Base64，防止 API 报错。
-
-### v2.1.1
-- **修复**: 将本地缓存的图片转换为 Base64 Data URL 传递给 CoPaw，解决了 AI 模型（如 OpenAI）无法访问本地文件路径导致的 `InternalError`。
-
-### v2.1.0
-- **新增**: 引入本地媒体缓存机制（`~/.copaw/media/wecom`）。
-- **修复**: 彻底解决企业微信图片 URL 缺少扩展名导致 AgentScope/OpenAI 校验报错的问题（通过在本地保存时强制添加 `.jpg` 后缀）。
-- **优化**: 同时支持图片和普通文件的本地缓存与自动后缀识别。
-
-### v2.0.2
-- **修复**: 尝试通过 `#.jpg` 锚点解决扩展名问题（已在 v2.1.0 中被更可靠的本地缓存方案替代）。
-
-### v2.0.1
-- **修复**: 解决 `aibot_respond_msg` 回复 `40008` (invalid message type) 错误，统一使用 `markdown` 类型发送。
-- **优化**: 增加 WebSocket 消息解析的健壮性，处理 `ServerTimeoutError` 异常。
-- **增强**: 增加跨线程发送消息的运行状态检查与回调日志。
-
-### v2.0.0
-- **新增**: 实现企业微信智能机器人 WebSocket 长连接模式。
 
 <img width="1603" height="800" alt="image" src="https://github.com/user-attachments/assets/84dbd2dc-d362-4eb1-bfc9-3b17f1b1d9c2" />
 
