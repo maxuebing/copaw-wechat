@@ -552,6 +552,7 @@ class WeComChannel(BaseChannel):
             from_user = body.get("from", {})
             sender_id = from_user.get("userid", "")
             msg_type = body.get("msgtype", "")
+            print(f"[DEBUG WeCom] _process_message_callback: msg_type={msg_type}, body={json.dumps(body, ensure_ascii=False)[:200]}...", flush=True)
 
             # 去重
             with self._processed_lock:
@@ -583,22 +584,35 @@ class WeComChannel(BaseChannel):
                 return
 
             # 保存 req_id 用于后续发送
-            print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}")
+            print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}", flush=True)
             await self._save_req_id(req_id, sender_id, chat_type, chat_id)
 
             # 构建原生 payload
-            native_payload = await self._build_native_payload(
-                body, sender_id, chat_type, chat_id, req_id
-            )
+            try:
+                native_payload = await self._build_native_payload(
+                    body, sender_id, chat_type, chat_id, req_id
+                )
+                print(f"[DEBUG WeCom] _build_native_payload 成功: content_parts_count={len(native_payload.get('content_parts', []))}", flush=True)
+            except Exception as e:
+                print(f"[DEBUG WeCom] _build_native_payload 失败: {e}", flush=True)
+                logger.error(f"构建 native_payload 异常: {e}")
+                import traceback
+                traceback.print_exc()
+                return
 
             # 入队处理
             if self._enqueue:
+                print(f"[DEBUG WeCom] 即将入队: {sender_id}", flush=True)
                 self._enqueue(native_payload)
             else:
+                print(f"[DEBUG WeCom] _enqueue 未设置!", flush=True)
                 logger.warning("enqueue callback not set")
 
         except Exception as e:
+            print(f"[DEBUG WeCom] _process_message_callback 异常: {e}", flush=True)
             logger.error(f"处理消息回调异常: {e}")
+            import traceback
+            traceback.print_exc()
             import traceback
             traceback.print_exc()
 
@@ -657,20 +671,26 @@ class WeComChannel(BaseChannel):
             原生 payload
         """
         msg_type = msg_data.get("msgtype", "")
-        content_parts = []
+        print(f"[DEBUG WeCom] _build_native_payload: type={msg_type}", flush=True)
 
-        # 解析消息内容
+        content_parts = []
         if msg_type == WECOM_MSGTYPE_TEXT:
             text = msg_data.get("text", {}).get("content", "")
-            content_parts.append(TextContent(type=ContentType.TEXT, text=text))
-
+            if text:
+                content_parts.append(TextContent(type=ContentType.TEXT, text=text))
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
             if image_url:
-                content_parts.append(
-                    ImageContent(type=ContentType.IMAGE, image_url=image_url)
-                )
-
+                print(f"[DEBUG WeCom] _build_native_payload: 识别到图片 {image_url}", flush=True)
+                try:
+                    # 尝试兼容不同的 ImageContent 参数
+                    content_parts.append(
+                        ImageContent(type=ContentType.IMAGE, image_url=image_url)
+                    )
+                except TypeError:
+                    content_parts.append(
+                        ImageContent(type=ContentType.IMAGE, url=image_url)
+                    )
         elif msg_type == "mixed":
             mixed = msg_data.get("mixed", {})
             text = extract_text_from_mixed(mixed)
@@ -683,41 +703,53 @@ class WeComChannel(BaseChannel):
                 if item.get("msgtype") == "image":
                     image_url = item.get("image", {}).get("url", "")
                     if image_url:
-                        content_parts.append(
-                            ImageContent(type=ContentType.IMAGE, image_url=image_url)
-                        )
-
-        elif msg_type == WECOM_MSGTYPE_VOICE:
-            voice_content = msg_data.get("voice", {}).get("content", "")
-            if voice_content:
-                content_parts.append(TextContent(type=ContentType.TEXT, text=voice_content))
-
+                        print(f"[DEBUG WeCom] _build_native_payload (mixed): 识别到图片 {image_url}", flush=True)
+                        try:
+                            content_parts.append(
+                                ImageContent(type=ContentType.IMAGE, image_url=image_url)
+                            )
+                        except TypeError:
+                            content_parts.append(
+                                ImageContent(type=ContentType.IMAGE, url=image_url)
+                            )
         elif msg_type == WECOM_MSGTYPE_FILE:
             file_url = msg_data.get("file", {}).get("url", "")
             if file_url:
-                content_parts.append(
-                    FileContent(type=ContentType.FILE, file_url=file_url)
-                )
+                print(f"[DEBUG WeCom] _build_native_payload: 识别到文件 {file_url}", flush=True)
+                try:
+                    content_parts.append(
+                        FileContent(type=ContentType.FILE, file_url=file_url)
+                    )
+                except TypeError:
+                    content_parts.append(
+                        FileContent(type=ContentType.FILE, url=file_url)
+                    )
+        elif msg_type == WECOM_MSGTYPE_VOICE:
+            # 语音消息
+            content = msg_data.get("voice", {}).get("content", "")
+            if content:
+                content_parts.append(TextContent(type=ContentType.TEXT, text=content))
 
         # 如果没有内容，添加空文本
         if not content_parts:
+            print(f"[DEBUG WeCom] _build_native_payload: 无内容, 添加空文本", flush=True)
             content_parts.append(TextContent(type=ContentType.TEXT, text=""))
 
-        # 构建元数据
-        meta = {
+        # 构建 native payload
+        native_payload = {
+            "channel": self.channel,
+            "sender_id": sender_id,
             "chat_type": chat_type,
             "chat_id": chat_id,
             "req_id": req_id,
-            "msgid": msg_data.get("msgid", ""),
-            "aibot_id": msg_data.get("aibotid", ""),
-        }
-
-        return {
-            "channel_id": self.channel,
-            "sender_id": sender_id,
             "content_parts": content_parts,
-            "meta": meta,
+            "meta": {
+                "msg_id": msg_data.get("msgid"),
+                "aibot_id": msg_data.get("aibotid"),
+                "response_url": msg_data.get("response_url"),
+            },
         }
+        return native_payload
 
     # ---------------------------
     # 访问控制
@@ -862,25 +894,24 @@ class WeComChannel(BaseChannel):
                 logger.warning(f"没有找到 req_id，无法发送: to_handle={to_handle}")
                 return
 
-            # 解析内容部分
+            # 提取文本和图片
             text_parts = []
             image_parts = []
-
             for part in parts:
-                p_type = getattr(part, "type", None)
+                if part.type == ContentType.TEXT:
+                    text_parts.append(part.text)
+                elif part.type == ContentType.IMAGE:
+                    # 尝试兼容不同的 ImageContent 参数
+                    url = getattr(part, "image_url", None) or getattr(part, "url", None)
+                    if url:
+                        image_parts.append(url)
+                elif part.type == ContentType.FILE:
+                    # 文件暂时转为文本链接
+                    url = getattr(part, "file_url", None) or getattr(part, "url", None)
+                    if url:
+                        text_parts.append(f"\n[文件]({url})")
 
-                if p_type == ContentType.TEXT:
-                    text_content = getattr(part, "text", "")
-                    if text_content:
-                        text_parts.append(text_content)
-
-                elif p_type == ContentType.IMAGE:
-                    image_url = getattr(part, "image_url", "")
-                    if image_url:
-                        image_parts.append(image_url)
-
-            msg = f"[DEBUG WeCom] send_content_parts: text_parts={len(text_parts)}, image_parts={len(image_parts)}"
-            print(msg, flush=True)
+            print(f"[DEBUG WeCom] send_content_parts: text_parts={len(text_parts)}, image_parts={len(image_parts)}", flush=True)
 
             # 如果只有文本
             if text_parts and not image_parts:
@@ -908,13 +939,14 @@ class WeComChannel(BaseChannel):
             if md_content:
                 text = "\n".join(md_content)
                 msg_dict = build_markdown_message(text)
-                msg = f"[DEBUG WeCom] send_content_parts: 即将发送 Markdown (含图片) 消息"
+                msg = f"[DEBUG WeCom] send_content_parts: 即将发送 Markdown (含图片) 消息, content={text[:100]}..."
                 print(msg, flush=True)
                 await self._send_response(req_id, msg_dict)
-
+            else:
+                print(f"[DEBUG WeCom] send_content_parts: 无有效内容发送", flush=True)
         except Exception as e:
-            msg = f"[DEBUG WeCom] send_content_parts 异常: {e}"
-            print(msg, flush=True)
+            print(f"[DEBUG WeCom] send_content_parts 异常: {e}", flush=True)
+            logger.error(f"发送多部分内容异常: {e}")
             import traceback
             traceback.print_exc()
 
@@ -927,13 +959,14 @@ class WeComChannel(BaseChannel):
         """
         import sys
         try:
+            # 构造回复消息
             response_msg = {
                 "cmd": "aibot_respond_msg",
                 "headers": {"req_id": req_id},
                 "body": msg,
             }
 
-            print(f"[DEBUG WeCom] _send_response: 准备发送, cmd={response_msg['cmd']}, req_id={req_id}, msgtype={msg.get('msgtype')}", flush=True)
+            print(f"[DEBUG WeCom] _send_response: 即将发送 {json.dumps(response_msg, ensure_ascii=False)[:200]}...", flush=True)
 
             # 检查是否在正确的事件循环中
             current_loop = asyncio.get_event_loop()
