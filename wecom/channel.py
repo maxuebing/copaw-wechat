@@ -735,9 +735,13 @@ class WeComChannel(BaseChannel):
             print(f"[DEBUG WeCom] _build_native_payload: 无内容, 添加空文本", flush=True)
             content_parts.append(TextContent(type=ContentType.TEXT, text=""))
 
+        # 如果只有图片，补充一段说明文字（防止某些模型忽略无文字的请求）
+        if msg_type == WECOM_MSGTYPE_IMAGE and len(content_parts) == 1:
+            content_parts.insert(0, TextContent(type=ContentType.TEXT, text="[图片]"))
+
         # 构建 native payload
         native_payload = {
-            "channel": self.channel,
+            "channel_id": self.channel,  # 使用 channel_id 保持一致
             "sender_id": sender_id,
             "chat_type": chat_type,
             "chat_id": chat_id,
@@ -749,6 +753,20 @@ class WeComChannel(BaseChannel):
                 "response_url": msg_data.get("response_url"),
             },
         }
+        
+        # 打印调试信息，显示 content_parts 的具体内容
+        parts_info = []
+        for p in content_parts:
+            p_type = getattr(p, "type", "unknown")
+            if p_type == ContentType.TEXT:
+                parts_info.append(f"Text(text='{getattr(p, 'text', '')[:20]}')")
+            elif p_type == ContentType.IMAGE:
+                url = getattr(p, "image_url", None) or getattr(p, "url", None)
+                parts_info.append(f"Image(url='{url[:50] if url else 'None'}')")
+            else:
+                parts_info.append(f"Part(type={p_type})")
+        
+        print(f"[DEBUG WeCom] _build_native_payload 完成: channel_id={self.channel}, sender_id={sender_id}, parts=[{', '.join(parts_info)}]", flush=True)
         return native_payload
 
     # ---------------------------
