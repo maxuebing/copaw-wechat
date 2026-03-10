@@ -13,6 +13,11 @@
 
 ## 更新日志
 
+### v2.1.7
+- **新增**: 支持企业微信图片解密（AES-256-CBC）。如果图片被加密，插件会自动使用配置的 `encoding_aes_key` 解密。
+- **新增**: 新增 `encoding_aes_key` 配置参数（43位字符），用于解密企业微信图片。
+- **修复**: 彻底解决企业微信图片加密导致的 `The image format is illegal and cannot be opened` 错误。
+
 ### v2.1.4
 - **修复**: 自动检测图片格式（通过文件头识别），修复企业微信图片强制使用 `image/jpeg` 导致的 `InvalidParameter: The image format is illegal and cannot be opened` 错误。
 
@@ -96,6 +101,7 @@ copaw app
       "enabled": true,
       "bot_id": "YOUR_BOT_ID",
       "secret": "YOUR_SECRET",
+      "encoding_aes_key": "YOUR_ENCODING_AES_KEY",
       "bot_prefix": "[BOT] "
     }
   }
@@ -109,11 +115,14 @@ copaw app
 | `enabled` | 是否启用 | 否 | `false` |
 | `bot_id` | 智能机器人 BotID | 是 | - |
 | `secret` | 长连接专用密钥 | 是 | - |
+| `encoding_aes_key` | 消息加密密钥（43位），用于解密图片 | 否 | `""` |
 | `bot_prefix` | 机器人回复前缀 | 否 | `"[BOT] "` |
 | `dm_policy` | 私聊策略 | 否 | `"open"` |
 | `group_policy` | 群聊策略 | 否 | `"open"` |
 | `allow_from` | 白名单用户 ID 列表 | 否 | `[]` |
 | `deny_message` | 拒绝消息 | 否 | `""` |
+
+> **注意**: `encoding_aes_key` 是可选的。如果企业微信的图片是加密的（无法识别文件头），则需要配置此参数。该密钥可从企业微信管理后台的智能机器人配置中获取。
 
 ## 验证安装
 
