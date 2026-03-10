@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -696,6 +697,20 @@ class WeComChannel(BaseChannel):
 
         return url
 
+    def _file_to_base64_data_url(self, file_path: str, mime_type: str = "image/jpeg") -> str:
+        """将本地文件转换为 Base64 Data URL"""
+        try:
+            p = Path(file_path)
+            if not p.exists():
+                return file_path
+            
+            data = p.read_bytes()
+            encoded = base64.b64encode(data).decode("utf-8")
+            return f"data:{mime_type};base64,{encoded}"
+        except Exception as e:
+            print(f"[DEBUG WeCom] Base64 转换失败: {e}", flush=True)
+            return file_path
+
     async def _build_native_payload(
         self,
         msg_data: dict,
@@ -727,17 +742,18 @@ class WeComChannel(BaseChannel):
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
             if image_url:
-                # 方案：下载并本地缓存，确保文件名有后缀，解决 AgentScope 校验问题
+                # 方案：下载并本地缓存，然后转换为 Base64 传递，彻底解决 API 访问本地路径和后缀报错
                 local_image_path = await self._download_and_cache_media(image_url, ".jpg")
-                print(f"[DEBUG WeCom] _build_native_payload: 图片路径={local_image_path}", flush=True)
+                data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+                print(f"[DEBUG WeCom] _build_native_payload: 图片转换为 Base64 完成 (长度={len(data_url)})", flush=True)
                 try:
                     # 尝试兼容不同的 ImageContent 参数
                     content_parts.append(
-                        ImageContent(type=ContentType.IMAGE, image_url=local_image_path)
+                        ImageContent(type=ContentType.IMAGE, image_url=data_url)
                     )
                 except TypeError:
                     content_parts.append(
-                        ImageContent(type=ContentType.IMAGE, url=local_image_path)
+                        ImageContent(type=ContentType.IMAGE, url=data_url)
                     )
         elif msg_type == "mixed":
             mixed = msg_data.get("mixed", {})
@@ -752,14 +768,15 @@ class WeComChannel(BaseChannel):
                     image_url = item.get("image", {}).get("url", "")
                     if image_url:
                         local_image_path = await self._download_and_cache_media(image_url, ".jpg")
-                        print(f"[DEBUG WeCom] _build_native_payload (mixed): 图片路径={local_image_path}", flush=True)
+                        data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+                        print(f"[DEBUG WeCom] _build_native_payload (mixed): 图片转换为 Base64 完成", flush=True)
                         try:
                             content_parts.append(
-                                ImageContent(type=ContentType.IMAGE, image_url=local_image_path)
+                                ImageContent(type=ContentType.IMAGE, image_url=data_url)
                             )
                         except TypeError:
                             content_parts.append(
-                                ImageContent(type=ContentType.IMAGE, url=local_image_path)
+                                ImageContent(type=ContentType.IMAGE, url=data_url)
                             )
         elif msg_type == WECOM_MSGTYPE_FILE:
             file_url = msg_data.get("file", {}).get("url", "")

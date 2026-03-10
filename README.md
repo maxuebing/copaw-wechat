@@ -13,6 +13,9 @@
 
 ## 更新日志
 
+### v2.1.1
+- **修复**: 将本地缓存的图片转换为 Base64 Data URL 传递给 CoPaw，解决了 AI 模型（如 OpenAI）无法访问本地文件路径导致的 `InternalError`。
+
 ### v2.1.0
 - **新增**: 引入本地媒体缓存机制（`~/.copaw/media/wecom`）。
 - **修复**: 彻底解决企业微信图片 URL 缺少扩展名导致 AgentScope/OpenAI 校验报错的问题（通过在本地保存时强制添加 `.jpg` 后缀）。
