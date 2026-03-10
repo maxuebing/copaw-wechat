@@ -8,4 +8,4 @@ from .channel import WeComChannel
 
 __all__ = ["WeComChannel"]
 
-__version__ = "2.0.0"  # 长连接模式
+__version__ = "2.0.1"  # 修复 aibot_respond_msg 消息类型错误 (40008)

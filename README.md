@@ -11,6 +11,16 @@
 - 自动重连和心跳保活
 - 访问控制（白名单）
 
+## 更新日志
+
+### v2.0.1
+- **修复**: 解决 `aibot_respond_msg` 回复 `40008` (invalid message type) 错误，统一使用 `markdown` 类型发送。
+- **优化**: 增加 WebSocket 消息解析的健壮性，处理 `ServerTimeoutError` 异常。
+- **增强**: 增加跨线程发送消息的运行状态检查与回调日志。
+
+### v2.0.0
+- **新增**: 实现企业微信智能机器人 WebSocket 长连接模式。
+
 <img width="1603" height="800" alt="image" src="https://github.com/user-attachments/assets/84dbd2dc-d362-4eb1-bfc9-3b17f1b1d9c2" />
 
 
