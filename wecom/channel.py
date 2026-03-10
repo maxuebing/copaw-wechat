@@ -578,8 +578,8 @@ class WeComChannel(BaseChannel):
             allowed, deny_msg = self._check_allowlist(sender_id, is_group)
 
             if not allowed and deny_msg:
-                # 发送拒绝消息
-                await self._send_response(req_id, build_text_message(deny_msg))
+                # 发送拒绝消息 (aibot_respond_msg 优先支持 markdown)
+                await self._send_response(req_id, build_markdown_message(deny_msg))
                 return
 
             # 保存 req_id 用于后续发送
@@ -832,8 +832,8 @@ class WeComChannel(BaseChannel):
         if self.bot_prefix:
             text = self.bot_prefix + text
 
-        # 发送文本消息
-        msg = build_text_message(text)
+        # 发送文本消息 (注意：aibot_respond_msg 优先支持 markdown 类型)
+        msg = build_markdown_message(text)
         await self._send_response(req_id, msg)
 
     async def send_content_parts(
@@ -887,27 +887,28 @@ class WeComChannel(BaseChannel):
                 text = "".join(text_parts)
                 if self.bot_prefix:
                     text = self.bot_prefix + text
-                msg_dict = build_text_message(text)
-                msg = f"[DEBUG WeCom] send_content_parts: 即将发送文本消息, text={text[:50]}"
+                # aibot_respond_msg 优先支持 markdown 类型
+                msg_dict = build_markdown_message(text)
+                msg = f"[DEBUG WeCom] send_content_parts: 即将发送 Markdown 消息, text={text[:50]}"
                 print(msg, flush=True)
                 await self._send_response(req_id, msg_dict)
                 return
 
-            # 如果有图片，发送图文混排
-            items = []
-
+            # 如果有图片，使用 Markdown 格式发送 (aibot_respond_msg 不一定支持 mixed)
+            md_content = []
             if text_parts:
                 text = "".join(text_parts)
                 if self.bot_prefix:
                     text = self.bot_prefix + text
-                items.append({"msgtype": "text", "text": {"content": text}})
+                md_content.append(text)
 
             for image_url in image_parts:
-                items.append({"msgtype": "image", "image": {"url": image_url}})
+                md_content.append(f"\n\n![图片]({image_url})")
 
-            if items:
-                msg_dict = build_mixed_message(items)
-                msg = f"[DEBUG WeCom] send_content_parts: 即将发送混排消息"
+            if md_content:
+                text = "\n".join(md_content)
+                msg_dict = build_markdown_message(text)
+                msg = f"[DEBUG WeCom] send_content_parts: 即将发送 Markdown (含图片) 消息"
                 print(msg, flush=True)
                 await self._send_response(req_id, msg_dict)
 
