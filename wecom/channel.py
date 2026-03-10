@@ -707,13 +707,31 @@ class WeComChannel(BaseChannel):
             # 注意：此处可能在非 WS 线程运行，如果 _ws_session 为空则新建
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, proxy=self._http_proxy) as resp:
+                    print(f"[DEBUG WeCom] HTTP 响应状态: {resp.status}", flush=True)
+                    print(f"[DEBUG WeCom] HTTP 响应头: {dict(resp.headers)}", flush=True)
+
                     if resp.status == 200:
+                        content_type = resp.headers.get('Content-Type', '')
+                        content_length = resp.headers.get('Content-Length', 'unknown')
+                        print(f"[DEBUG WeCom] Content-Type: {content_type}, Content-Length: {content_length}", flush=True)
+
                         content = await resp.read()
+
+                        # 打印前 16 字节用于调试
+                        print(f"[DEBUG WeCom] 文件头 (hex): {content[:16].hex()}", flush=True)
+
+                        # 如果文件太小，可能不是有效图片
+                        if len(content) < 100:
+                            print(f"[DEBUG WeCom] 警告: 文件过小 ({len(content)} 字节)，可能不是有效图片", flush=True)
+
                         local_path.write_bytes(content)
-                        print(f"[DEBUG WeCom] 媒体下载成功: {local_path}", flush=True)
+                        print(f"[DEBUG WeCom] 媒体下载成功: {local_path}, 大小: {len(content)} 字节", flush=True)
                         return str(local_path)
                     else:
                         print(f"[DEBUG WeCom] 媒体下载失败: HTTP {resp.status}", flush=True)
+                        # 打印响应体用于调试
+                        error_body = await resp.text()
+                        print(f"[DEBUG WeCom] 错误响应体: {error_body[:500]}", flush=True)
         except Exception as e:
             print(f"[DEBUG WeCom] 媒体下载异常: {e}", flush=True)
             import traceback
