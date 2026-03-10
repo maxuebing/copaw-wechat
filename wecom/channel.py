@@ -803,6 +803,49 @@ class WeComChannel(BaseChannel):
             traceback.print_exc()
             return encrypted_data
 
+    def _decrypt_media_with_key(self, encrypted_data: bytes, aes_key: str) -> bytes:
+        """使用给定的密钥解密企业微信的媒体文件（图片）
+
+        Args:
+            encrypted_data: 加密的媒体数据（原始字节，非 base64）
+            aes_key: Base64 编码的 AES 密钥（43位）
+
+        Returns:
+            解密后的媒体数据
+        """
+        try:
+            # Base64 解码密钥，并添加 '=' 填充
+            key = base64.b64decode(aes_key + "=")
+            iv = key[:16]  # IV 是密钥的前 16 字节
+
+            # 创建 AES-256-CBC 解密器
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+
+            # 解密数据
+            decrypted = cipher.decrypt(encrypted_data)
+
+            # 手动去除 PKCS7 填充（填充到 32 字节块）
+            pad_len = decrypted[-1]
+            if 1 <= pad_len <= 32:
+                # 验证填充是否有效
+                valid_padding = True
+                for i in range(len(decrypted) - pad_len, len(decrypted)):
+                    if decrypted[i] != pad_len:
+                        valid_padding = False
+                        break
+
+                if valid_padding:
+                    decrypted = decrypted[:-pad_len]
+
+            print(f"[DEBUG WeCom] 媒体解密成功: {len(encrypted_data)} -> {len(decrypted)} 字节", flush=True)
+            return decrypted
+
+        except Exception as e:
+            print(f"[DEBUG WeCom] 媒体解密失败: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return encrypted_data
+
     def _detect_image_mime_type(self, file_path: str) -> str:
         """基于文件头检测图片的实际 MIME 类型
 
@@ -872,8 +915,13 @@ class WeComChannel(BaseChannel):
             print(f"[DEBUG WeCom] Base64 转换失败: {e}", flush=True)
             return file_path
 
-    async def _process_image_url(self, image_url: str, http_headers: dict = None) -> str:
+    async def _process_image_url(self, image_url: str, http_headers: dict = None, aes_key: str = None) -> str:
         """处理图片 URL：下载、缓存、转 Base64，并确保格式符合要求
+
+        Args:
+            image_url: 图片 URL
+            http_headers: 可选的 HTTP 请求头
+            aes_key: 图片解密密钥（从消息的 image.aeskey 获取）
 
         如果图片是服务端加密的（无法识别文件头），则直接返回原始 URL
         """
@@ -909,50 +957,54 @@ class WeComChannel(BaseChannel):
 
             if not is_valid_image:
                 print(f"[DEBUG WeCom] 警告: 图片文件头不匹配，可能是企业微信加密数据", flush=True)
-                # 尝试解密图片
-                if self._aes_key:
-                    print(f"[DEBUG WeCom] 尝试解密图片", flush=True)
-                    encrypted_data = p.read_bytes()
-                    decrypted_data = self._decrypt_media(encrypted_data)
+                # 尝试使用 aes_key 解密图片（优先使用消息中的密钥）
+                decrypt_key = aes_key or (self._encoding_aes_key if hasattr(self, '_encoding_aes_key') else None)
+                if decrypt_key:
+                    print(f"[DEBUG WeCom] 尝试使用 aes_key 解密图片", flush=True)
+                    try:
+                        # 使用消息中的 aes_key 解密
+                        decrypted_data = self._decrypt_media_with_key(p.read_bytes(), decrypt_key)
 
-                    # 保存解密后的数据到临时文件
-                    temp_path = p.with_suffix('.decrypted' + p.suffix)
-                    temp_path.write_bytes(decrypted_data)
+                        # 保存解密后的数据到临时文件
+                        temp_path = p.with_suffix('.decrypted' + p.suffix)
+                        temp_path.write_bytes(decrypted_data)
 
-                    # 重新检测格式
-                    new_mime = self._detect_image_mime_type(str(temp_path))
-                    print(f"[DEBUG WeCom] 解密后图片格式: {new_mime}", flush=True)
+                        # 重新检测格式
+                        new_mime = self._detect_image_mime_type(str(temp_path))
+                        print(f"[DEBUG WeCom] 解密后图片格式: {new_mime}", flush=True)
 
-                    # 验证解密后的文件头
-                    with open(temp_path, "rb") as f:
-                        new_header = f.read(12)
+                        # 验证解密后的文件头
+                        with open(temp_path, "rb") as f:
+                            new_header = f.read(12)
 
-                    is_valid_decrypted = False
-                    if new_mime == "image/jpeg" and new_header[:3] == b'\xFF\xD8\xFF':
-                        is_valid_decrypted = True
-                    elif new_mime == "image/png" and new_header[:8] == b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A':
-                        is_valid_decrypted = True
-                    elif new_mime == "image/gif" and new_header[:4] == b'\x47\x49\x46\x38':
-                        is_valid_decrypted = True
-                    elif new_mime == "image/webp" and new_header[:4] == b'\x52\x49\x46\x46':
-                        is_valid_decrypted = True
+                        is_valid_decrypted = False
+                        if new_mime == "image/jpeg" and new_header[:3] == b'\xFF\xD8\xFF':
+                            is_valid_decrypted = True
+                        elif new_mime == "image/png" and new_header[:8] == b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A':
+                            is_valid_decrypted = True
+                        elif new_mime == "image/gif" and new_header[:4] == b'\x47\x49\x46\x38':
+                            is_valid_decrypted = True
+                        elif new_mime == "image/webp" and new_header[:4] == b'\x52\x49\x46\x46':
+                            is_valid_decrypted = True
 
-                    if is_valid_decrypted:
-                        print(f"[DEBUG WeCom] 解密成功，使用解密后的图片", flush=True)
-                        # 转换解密后的图片为 Base64
-                        data_url = self._file_to_base64_data_url(str(temp_path), new_mime)
-                        # 清理临时文件
-                        temp_path.unlink()
-                        return data_url
-                    else:
-                        print(f"[DEBUG WeCom] 解密后仍无法识别图片格式", flush=True)
-                        # 清理临时文件
-                        if temp_path.exists():
+                        if is_valid_decrypted:
+                            print(f"[DEBUG WeCom] 解密成功，使用解密后的图片", flush=True)
+                            # 转换解密后的图片为 Base64
+                            data_url = self._file_to_base64_data_url(str(temp_path), new_mime)
+                            # 清理临时文件
                             temp_path.unlink()
+                            return data_url
+                        else:
+                            print(f"[DEBUG WeCom] 解密后仍无法识别图片格式", flush=True)
+                            # 清理临时文件
+                            if temp_path.exists():
+                                temp_path.unlink()
+                    except Exception as e:
+                        print(f"[DEBUG WeCom] 解密失败: {e}", flush=True)
                 else:
-                    print(f"[DEBUG WeCom] 未配置 EncodingAESKey，无法解密图片", flush=True)
+                    print(f"[DEBUG WeCom] 未提供 aes_key，无法解密图片", flush=True)
 
-                # 如果解密失败或未配置密钥，直接返回原始 URL
+                # 如果解密失败或未提供密钥，直接返回原始 URL
                 # 注意：这需要 AI 模型能够访问外网
                 return image_url
 
@@ -1018,9 +1070,10 @@ class WeComChannel(BaseChannel):
                 content_parts.append(TextContent(type=ContentType.TEXT, text=text))
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
+            image_aeskey = msg_data.get("image", {}).get("aeskey", "")  # 获取图片解密密钥
             if image_url:
-                # 使用 _process_image_url 处理图片，确保格式正确
-                data_url = await self._process_image_url(image_url)
+                # 使用 _process_image_url 处理图片，传递 aeskey 用于解密
+                data_url = await self._process_image_url(image_url, aes_key=image_aeskey)
                 print(f"[DEBUG WeCom] _build_native_payload: 图片转换为 Base64 完成 (长度={len(data_url)})", flush=True)
                 try:
                     # 尝试兼容不同的 ImageContent 参数
