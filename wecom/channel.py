@@ -735,6 +735,43 @@ class WeComChannel(BaseChannel):
             print(f"[DEBUG WeCom] Base64 转换失败: {e}", flush=True)
             return file_path
 
+    async def _process_image_url(self, image_url: str) -> str:
+        """处理图片 URL：下载、缓存、转 Base64，并确保格式符合要求"""
+        if not image_url:
+            return ""
+
+        # 下载并本地缓存
+        local_image_path = await self._download_and_cache_media(image_url, ".jpg")
+        # 转换为 Base64
+        data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+
+        # 检查 data_url 是否有效 (agentscope 要求必须有后缀或为 data: 开头)
+        if not data_url.startswith("data:") and not any(data_url.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+            print(f"[DEBUG WeCom] data_url 缺少后缀，尝试修复: {data_url}", flush=True)
+            try:
+                p_old = Path(data_url)
+                # 如果文件存在，尝试创建带后缀的软链接
+                if p_old.exists():
+                    # 确保是绝对路径
+                    p_old = p_old.resolve()
+                    # 尝试添加 .jpg 后缀
+                    p_new = p_old.with_name(p_old.name + ".jpg")
+                    
+                    if not p_new.exists():
+                        os.symlink(p_old, p_new)
+                        print(f"[DEBUG WeCom] 创建软链接: {p_new} -> {p_old}", flush=True)
+                    
+                    data_url = str(p_new)
+                else:
+                    # 文件不存在，直接追加后缀以通过格式校验
+                    data_url = f"{data_url}.jpg"
+            except Exception as e:
+                print(f"[DEBUG WeCom] 修复后缀失败: {e}", flush=True)
+                # 降级处理：直接追加后缀
+                data_url = f"{data_url}.jpg"
+
+        return data_url
+
     async def _build_native_payload(
         self,
         msg_data: dict,
@@ -771,9 +808,8 @@ class WeComChannel(BaseChannel):
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
             if image_url:
-                # 方案：下载并本地缓存，然后转换为 Base64 传递，彻底解决 API 访问本地路径和后缀报错
-                local_image_path = await self._download_and_cache_media(image_url, ".jpg")
-                data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+                # 使用 _process_image_url 处理图片，确保格式正确
+                data_url = await self._process_image_url(image_url)
                 print(f"[DEBUG WeCom] _build_native_payload: 图片转换为 Base64 完成 (长度={len(data_url)})", flush=True)
                 try:
                     # 尝试兼容不同的 ImageContent 参数
@@ -796,8 +832,7 @@ class WeComChannel(BaseChannel):
                 if item.get("msgtype") == "image":
                     image_url = item.get("image", {}).get("url", "")
                     if image_url:
-                        local_image_path = await self._download_and_cache_media(image_url, ".jpg")
-                        data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+                        data_url = await self._process_image_url(image_url)
                         print(f"[DEBUG WeCom] _build_native_payload (mixed): 图片转换为 Base64 完成", flush=True)
                         try:
                             content_parts.append(
