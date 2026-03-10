@@ -1039,6 +1039,72 @@ class WeComChannel(BaseChannel):
 
         return data_url
 
+    async def _process_file_url(self, file_url: str, ext: str = ".bin", aes_key: str = None) -> str:
+        """处理文件 URL：下载、解密（如果需要）、缓存
+
+        Args:
+            file_url: 文件 URL
+            ext: 文件扩展名
+            aes_key: 文件解密密钥（从消息的 file.aeskey 获取）
+
+        Returns:
+            本地文件路径
+        """
+        if not file_url:
+            return ""
+
+        # 下载并本地缓存
+        local_file_path = await self._download_and_cache_media(file_url, ext)
+        p = Path(local_file_path)
+
+        if not p.exists():
+            return file_url
+
+        # 检查文件是否需要解密
+        # 读取文件头
+        with open(p, "rb") as f:
+            header = f.read(12)
+
+        # 检查是否是常见文件格式
+        known_signatures = {
+            b'\x50\x4b': True,  # ZIP
+            b'\x1f\x8b': True,  # GZIP
+            b'\x37\x7a\xbc\xaf': True,  # 7z
+            b'\x52\x61\x72\x21': True,  # RAR
+            b'\x25\x50\x44\x46': True,  # PDF
+            b'\xd0\xcf\x11\xe0': True,  # Office (DOC/XLS/PPT)
+            b'\x50\x4b\x03\x04': True,  # ZIP (alternative)
+            b'\x50\x4b\x05\x06': True,  # ZIP (empty)
+        }
+
+        is_known_format = False
+        for sig in known_signatures:
+            if header.startswith(sig):
+                is_known_format = True
+                break
+
+        # 如果不是已知格式且有 aes_key，尝试解密
+        if not is_known_format and aes_key:
+            print(f"[DEBUG WeCom] 文件格式未知，尝试解密", flush=True)
+            try:
+                encrypted_data = p.read_bytes()
+                decrypted_data = self._decrypt_media_with_key(encrypted_data, aes_key)
+
+                # 保存解密后的数据
+                temp_path = p.with_suffix('.decrypted' + p.suffix)
+                temp_path.write_bytes(decrypted_data)
+
+                print(f"[DEBUG WeCom] 文件解密成功，使用解密后的文件", flush=True)
+                # 清理原始文件，替换为解密后的文件
+                p.unlink()
+                temp_path.rename(p)
+                return str(p)
+
+            except Exception as e:
+                print(f"[DEBUG WeCom] 文件解密失败: {e}，使用原始文件", flush=True)
+
+        return str(p)
+
     async def _build_native_payload(
         self,
         msg_data: dict,
@@ -1109,11 +1175,14 @@ class WeComChannel(BaseChannel):
                             )
         elif msg_type == WECOM_MSGTYPE_FILE:
             file_url = msg_data.get("file", {}).get("url", "")
+            file_aeskey = msg_data.get("file", {}).get("aeskey", "")  # 获取文件解密密钥
             if file_url:
                 # 获取原始文件名后缀
                 filename = msg_data.get("file", {}).get("name", "file")
                 ext = Path(filename).suffix or ".bin"
-                local_file_path = await self._download_and_cache_media(file_url, ext)
+
+                # 下载并处理文件（可能需要解密）
+                local_file_path = await self._process_file_url(file_url, ext, file_aeskey)
                 print(f"[DEBUG WeCom] _build_native_payload: 文件路径={local_file_path}", flush=True)
                 try:
                     content_parts.append(
