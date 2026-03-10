@@ -566,10 +566,6 @@ class WeComChannel(BaseChannel):
                 if alias:
                     sender_id = alias
 
-                # 临时修复：为了避开历史记录中的坏数据，我们在 user_id 后添加后缀
-                # 这样系统会认为这是一个新用户，从而创建一个干净的会话
-                sender_id = f"{sender_id}_v2"
-
                 msg_type = body.get("msgtype", "")
                 print(f"[DEBUG WeCom] _process_message_callback: msg_type={msg_type}, body={json.dumps(body, ensure_ascii=False)[:200]}...", flush=True)
                 
@@ -608,7 +604,6 @@ class WeComChannel(BaseChannel):
                     return
 
                 # 保存 req_id 用于后续发送
-                # 注意：保存时要用加了后缀的 sender_id (作为 to_handle)
                 print(f"[DEBUG WeCom] 即将保存 req_id: req_id={req_id}, sender_id={sender_id}, chat_type={chat_type}", flush=True)
                 await self._save_req_id(req_id, sender_id, chat_type, chat_id)
 
@@ -620,17 +615,17 @@ class WeComChannel(BaseChannel):
                     print("[DEBUG WeCom] _build_native_payload returns empty", flush=True)
                     return
 
-                # 获取最终的 sender_id (可能包含后缀)
+                # 获取最终的 sender_id
                 final_sender_id = native_payload.get("sender_id", sender_id)
                 
-                # 显式构造 session_id，确保使用修改后的 sender_id
+                # 显式构造 session_id
                 if chat_type == WECOM_CHATTYPE_GROUP:
                     session_id = f"{self.channel}:group:{chat_id}"
                 else:
                     session_id = f"{self.channel}:{final_sender_id}"
                 native_payload["session_id"] = session_id
                 
-                # 覆盖 native_payload 里的 user_id，确保它也是带后缀的
+                # 覆盖 native_payload 里的 user_id
                 native_payload["user_id"] = final_sender_id
 
                 print(f"[DEBUG WeCom] _build_native_payload 成功: content_parts_count={len(native_payload.get('content_parts', []))}, session_id={session_id}", flush=True)
@@ -871,10 +866,6 @@ class WeComChannel(BaseChannel):
         """
         msg_type = msg_data.get("msgtype", "")
 
-        # 临时修复：为了避开历史记录中的坏数据，我们在 user_id 后添加后缀
-        # 这样系统会认为这是一个新用户，从而创建一个干净的会话
-        # sender_id = f"{sender_id}_v2"
-        # 已经在 _process_message_callback 中处理
         print(f"[DEBUG WeCom] _build_native_payload: type={msg_type}, sender={sender_id}", flush=True)
 
         content_parts = []
@@ -1079,18 +1070,9 @@ class WeComChannel(BaseChannel):
         self, to_handle: str, text: str, meta: Optional[Dict[str, Any]] = None
     ) -> None:
         """发送一条文本消息"""
-        # 临时处理：如果 to_handle 带 _v2 后缀，查找时要尝试去掉它
-        # 或者存储时已经存了带 _v2 的 key
-        
         # 总是从存储中获取最新的 req_id
         req_id = self._get_req_id_sync(to_handle)
         
-        # 如果找不到，尝试查找原始 ID (去掉 _v2)
-        if not req_id and to_handle.endswith("_v2"):
-             original_handle = to_handle[:-3]
-             print(f"[DEBUG WeCom] 尝试查找原始 ID: {original_handle}", flush=True)
-             req_id = self._get_req_id_sync(original_handle)
-
         print(f"[DEBUG WeCom] send 被调用: to_handle={to_handle}, text={text[:50] if text else ''}, req_id from storage={req_id}")
 
         if not req_id:
@@ -1123,12 +1105,6 @@ class WeComChannel(BaseChannel):
             # 因为 meta 中的 req_id 可能是旧消息的
             req_id = self._get_req_id_sync(to_handle)
             
-            # 如果找不到，尝试查找原始 ID (去掉 _v2)
-            if not req_id and to_handle.endswith("_v2"):
-                 original_handle = to_handle[:-3]
-                 print(f"[DEBUG WeCom] send_content_parts 尝试查找原始 ID: {original_handle}", flush=True)
-                 req_id = self._get_req_id_sync(original_handle)
-
             msg = f"[DEBUG WeCom] send_content_parts: req_id from storage={req_id}"
             print(msg, flush=True)
 
