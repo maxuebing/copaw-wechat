@@ -8,4 +8,4 @@ from .channel import WeComChannel
 
 __all__ = ["WeComChannel"]
 
-__version__ = "2.0.2"  # 修复图片 URL 缺少扩展名导致 AgentScope 报错的问题
+__version__ = "2.1.0"  # 引入本地媒体缓存机制，彻底解决图片扩展名校验报错问题

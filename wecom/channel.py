@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
 import os
 import threading
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
@@ -136,6 +138,10 @@ class WeComChannel(BaseChannel):
         self.bot_id = bot_id
         self.secret = secret
         self.bot_prefix = bot_prefix
+
+        # 媒体目录
+        self._media_dir = Path(os.path.expanduser("~/.copaw/media/wecom"))
+        self._media_dir.mkdir(parents=True, exist_ok=True)
 
         # 代理配置
         self._http_proxy = http_proxy
@@ -650,6 +656,46 @@ class WeComChannel(BaseChannel):
             import traceback
             traceback.print_exc()
 
+    async def _download_and_cache_media(self, url: str, ext: str = ".jpg") -> str:
+        """下载媒体文件并缓存到本地，确保有扩展名
+
+        Args:
+            url: 媒体 URL
+            ext: 期望的扩展名
+
+        Returns:
+            本地文件路径
+        """
+        if not url:
+            return ""
+
+        # 生成缓存文件名 (使用 URL 的 MD5)
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        local_path = self._media_dir / f"{url_hash}{ext}"
+
+        if local_path.exists():
+            return str(local_path)
+
+        try:
+            print(f"[DEBUG WeCom] 开始下载媒体: {url[:100]}...", flush=True)
+            # 使用 self._ws_session 或新建 session
+            # 注意：此处可能在非 WS 线程运行，如果 _ws_session 为空则新建
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, proxy=self._http_proxy) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        local_path.write_bytes(content)
+                        print(f"[DEBUG WeCom] 媒体下载成功: {local_path}", flush=True)
+                        return str(local_path)
+                    else:
+                        print(f"[DEBUG WeCom] 媒体下载失败: HTTP {resp.status}", flush=True)
+        except Exception as e:
+            print(f"[DEBUG WeCom] 媒体下载异常: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+        return url
+
     async def _build_native_payload(
         self,
         msg_data: dict,
@@ -681,16 +727,17 @@ class WeComChannel(BaseChannel):
         elif msg_type == WECOM_MSGTYPE_IMAGE:
             image_url = msg_data.get("image", {}).get("url", "")
             if image_url:
-                image_url = fix_wecom_image_url(image_url)
-                print(f"[DEBUG WeCom] _build_native_payload: 识别到图片 {image_url}", flush=True)
+                # 方案：下载并本地缓存，确保文件名有后缀，解决 AgentScope 校验问题
+                local_image_path = await self._download_and_cache_media(image_url, ".jpg")
+                print(f"[DEBUG WeCom] _build_native_payload: 图片路径={local_image_path}", flush=True)
                 try:
                     # 尝试兼容不同的 ImageContent 参数
                     content_parts.append(
-                        ImageContent(type=ContentType.IMAGE, image_url=image_url)
+                        ImageContent(type=ContentType.IMAGE, image_url=local_image_path)
                     )
                 except TypeError:
                     content_parts.append(
-                        ImageContent(type=ContentType.IMAGE, url=image_url)
+                        ImageContent(type=ContentType.IMAGE, url=local_image_path)
                     )
         elif msg_type == "mixed":
             mixed = msg_data.get("mixed", {})
@@ -704,27 +751,31 @@ class WeComChannel(BaseChannel):
                 if item.get("msgtype") == "image":
                     image_url = item.get("image", {}).get("url", "")
                     if image_url:
-                        image_url = fix_wecom_image_url(image_url)
-                        print(f"[DEBUG WeCom] _build_native_payload (mixed): 识别到图片 {image_url}", flush=True)
+                        local_image_path = await self._download_and_cache_media(image_url, ".jpg")
+                        print(f"[DEBUG WeCom] _build_native_payload (mixed): 图片路径={local_image_path}", flush=True)
                         try:
                             content_parts.append(
-                                ImageContent(type=ContentType.IMAGE, image_url=image_url)
+                                ImageContent(type=ContentType.IMAGE, image_url=local_image_path)
                             )
                         except TypeError:
                             content_parts.append(
-                                ImageContent(type=ContentType.IMAGE, url=image_url)
+                                ImageContent(type=ContentType.IMAGE, url=local_image_path)
                             )
         elif msg_type == WECOM_MSGTYPE_FILE:
             file_url = msg_data.get("file", {}).get("url", "")
             if file_url:
-                print(f"[DEBUG WeCom] _build_native_payload: 识别到文件 {file_url}", flush=True)
+                # 获取原始文件名后缀
+                filename = msg_data.get("file", {}).get("name", "file")
+                ext = Path(filename).suffix or ".bin"
+                local_file_path = await self._download_and_cache_media(file_url, ext)
+                print(f"[DEBUG WeCom] _build_native_payload: 文件路径={local_file_path}", flush=True)
                 try:
                     content_parts.append(
-                        FileContent(type=ContentType.FILE, file_url=file_url)
+                        FileContent(type=ContentType.FILE, file_url=local_file_path)
                     )
                 except TypeError:
                     content_parts.append(
-                        FileContent(type=ContentType.FILE, url=file_url)
+                        FileContent(type=ContentType.FILE, url=local_file_path)
                     )
         elif msg_type == WECOM_MSGTYPE_VOICE:
             # 语音消息
@@ -1211,29 +1262,3 @@ def build_mixed_message(items: list) -> dict:
 def build_markdown_message(content: str) -> dict:
     """构建 Markdown 消息"""
     return {"msgtype": "markdown", "markdown": {"content": content}}
-
-
-def fix_wecom_image_url(url: str) -> str:
-    """修复企业微信图片 URL 缺少扩展名的问题
-
-    企业微信的智能机器人图片 URL 经常不带扩展名，例如:
-    https://.../Cxlj9ue/7615488012360294876?sign=...
-    这会导致 AgentScope 的 OpenAI 格式化工具报错。
-    通过在 URL 末尾添加 #.jpg 锚点，可以骗过扩展名检查，同时不影响实际下载。
-    """
-    if not url:
-        return url
-
-    # 检查 URL 路径部分是否已有扩展名
-    path_part = url.split("?")[0].split("#")[0]
-    supported_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp")
-
-    if not path_part.lower().endswith(supported_extensions):
-        # 如果没有扩展名，在末尾添加 #.jpg
-        # 如果已有 fragment，则不处理
-        if "#" not in url:
-            fixed_url = url + "#.jpg"
-            print(f"[DEBUG WeCom] fix_wecom_image_url: 原始 URL 无后缀, 已添加锚点: {fixed_url[:100]}...", flush=True)
-            return fixed_url
-
-    return url
