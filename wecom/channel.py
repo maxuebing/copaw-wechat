@@ -721,13 +721,68 @@ class WeComChannel(BaseChannel):
 
         return url
 
-    def _file_to_base64_data_url(self, file_path: str, mime_type: str = "image/jpeg") -> str:
-        """将本地文件转换为 Base64 Data URL"""
+    def _detect_image_mime_type(self, file_path: str) -> str:
+        """基于文件头检测图片的实际 MIME 类型
+
+        Args:
+            file_path: 图片文件路径
+
+        Returns:
+            MIME 类型字符串
+        """
+        try:
+            p = Path(file_path)
+            if not p.exists():
+                return "image/jpeg"
+
+            # 读取文件头（前 12 字节）
+            with open(p, "rb") as f:
+                header = f.read(12)
+
+            if not header:
+                return "image/jpeg"
+
+            # 检测各种图片格式的文件头
+            # JPEG: FF D8 FF
+            if header[:3] == b'\xFF\xD8\xFF':
+                return "image/jpeg"
+            # PNG: 89 50 4E 47 0D 0A 1A 0A
+            if header[:8] == b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A':
+                return "image/png"
+            # GIF: 47 49 46 38 (GIF8)
+            if header[:4] == b'\x47\x49\x46\x38':
+                # GIF87a 或 GIF89a
+                return "image/gif"
+            # WebP: 52 49 46 46 ... 57 45 42 50 (RIFF...WEBP)
+            if header[:4] == b'\x52\x49\x46\x46' and header[8:12] == b'\x57\x45\x42\x50':
+                return "image/webp"
+            # BMP: 42 4D (BM)
+            if header[:2] == b'\x42\x4D':
+                return "image/bmp"
+
+            # 无法识别，默认返回 JPEG
+            print(f"[DEBUG WeCom] 无法识别图片格式，使用默认 image/jpeg. 文件头: {header[:8].hex()}", flush=True)
+            return "image/jpeg"
+        except Exception as e:
+            print(f"[DEBUG WeCom] 检测图片格式失败: {e}", flush=True)
+            return "image/jpeg"
+
+    def _file_to_base64_data_url(self, file_path: str, mime_type: str = None) -> str:
+        """将本地文件转换为 Base64 Data URL
+
+        Args:
+            file_path: 图片文件路径
+            mime_type: MIME 类型，如果为 None 则自动检测
+        """
         try:
             p = Path(file_path)
             if not p.exists():
                 return file_path
-            
+
+            # 自动检测 MIME 类型
+            if mime_type is None:
+                mime_type = self._detect_image_mime_type(file_path)
+
             data = p.read_bytes()
             encoded = base64.b64encode(data).decode("utf-8")
             return f"data:{mime_type};base64,{encoded}"
@@ -740,10 +795,13 @@ class WeComChannel(BaseChannel):
         if not image_url:
             return ""
 
-        # 下载并本地缓存
+        # 下载并本地缓存（不强制使用 .jpg 后缀）
         local_image_path = await self._download_and_cache_media(image_url, ".jpg")
-        # 转换为 Base64
-        data_url = self._file_to_base64_data_url(local_image_path, "image/jpeg")
+
+        # 自动检测 MIME 类型并转换为 Base64
+        detected_mime = self._detect_image_mime_type(local_image_path)
+        print(f"[DEBUG WeCom] 检测到图片格式: {detected_mime}", flush=True)
+        data_url = self._file_to_base64_data_url(local_image_path, detected_mime)
 
         # 检查 data_url 是否有效 (agentscope 要求必须有后缀或为 data: 开头)
         if not data_url.startswith("data:") and not any(data_url.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
@@ -753,13 +811,13 @@ class WeComChannel(BaseChannel):
             try:
                 import mimetypes
                 import base64
-                
+
                 p_old = Path(data_url)
                 if p_old.exists():
                     mime_type, _ = mimetypes.guess_type(str(p_old))
                     if not mime_type:
                         mime_type = "image/jpeg"
-                    
+
                     with open(p_old, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode("utf-8")
                         data_url = f"data:{mime_type};base64,{encoded}"

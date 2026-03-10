@@ -13,6 +13,12 @@
 
 ## 更新日志
 
+### v2.1.4
+- **修复**: 自动检测图片格式（通过文件头识别），修复企业微信图片强制使用 `image/jpeg` 导致的 `InvalidParameter: The image format is illegal and cannot be opened` 错误。
+
+### v2.1.3
+- **增强**: 增强图片路径处理，确保所有本地路径都转换为 Base64，防止 API 报错。
+
 ### v2.1.1
 - **修复**: 将本地缓存的图片转换为 Base64 Data URL 传递给 CoPaw，解决了 AI 模型（如 OpenAI）无法访问本地文件路径导致的 `InternalError`。
 
