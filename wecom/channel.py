@@ -1208,17 +1208,19 @@ class WeComChannel(BaseChannel):
             content_parts.insert(0, TextContent(type=ContentType.TEXT, text="[图片]"))
 
         # 构建 native payload
+        # 注意：chat_type 和 chat_id 必须放在 meta 里，因为 CoPaw 的 BaseChannel
+        # 只从 payload["meta"] 获取 meta 信息
         native_payload = {
             "channel_id": self.channel,  # 使用 channel_id 保持一致
             "sender_id": sender_id,
-            "chat_type": chat_type,
-            "chat_id": chat_id,
             "req_id": req_id,
             "content_parts": content_parts,
             "meta": {
                 "msg_id": msg_data.get("msgid"),
                 "aibot_id": msg_data.get("aibotid"),
                 "response_url": msg_data.get("response_url"),
+                "chat_type": chat_type,
+                "chat_id": chat_id,
             },
         }
         
@@ -1284,6 +1286,13 @@ class WeComChannel(BaseChannel):
         sender_id = payload.get("sender_id") or ""
         content_parts = payload.get("content_parts") or []
         meta = dict(payload.get("meta") or {})
+
+        # 将顶层的 chat_type 和 chat_id 合并到 meta 中
+        # 这样 resolve_session_id 和 get_to_handle_from_request 可以正确识别群聊
+        if "chat_type" in payload:
+            meta["chat_type"] = payload["chat_type"]
+        if "chat_id" in payload:
+            meta["chat_id"] = payload["chat_id"]
 
         session_id = self.resolve_session_id(sender_id, meta)
 
