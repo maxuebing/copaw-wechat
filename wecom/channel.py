@@ -311,6 +311,11 @@ class WeComChannel(BaseChannel):
         4. 启动心跳任务
         5. 启动消息接收循环
         """
+        # 检查是否启用
+        if not self.enabled:
+            logger.debug("企业微信频道已禁用，跳过启动")
+            return
+
         # 显示版本号
         try:
             from . import __version__
